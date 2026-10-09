@@ -4,19 +4,13 @@
  * Shared guidance lives in the server `instructions`, which clients that support them add to the model's context once.
  * Not every host surfaces `instructions`, and the model chooses a tool from its description alone, so the rules a wrong call would break
  * (which link to give, what a withheld price means, that prices are observed) are kept in the descriptions as well, in short form.
- * The verbatim catalogue limits are in the instructions only, and a test pins them to spec/catalogue-limits.txt.
+ * The verbatim catalogue limits are in the instructions only, and they are generated from spec/catalogue-limits.txt.
  */
 
-/**
- * What DropHawk does not know, word for word as the website's agent documents say it.
- * A test compares this with spec/catalogue-limits.txt, which is synced from the website, so the two cannot drift.
- */
-export const CATALOGUE_LIMITS = [
-  "- Prices are what DropHawk last observed, not a live retailer quote. Treat them as recent rather than current, and link the user to the retailer to confirm.",
-  "- Coverage is PC components and related hardware sold by Australian retailers. A product no retailer in that set carries is not in the catalogue, and absence is not evidence it does not exist.",
-  "- Prices are in the currency each listing is sold in, so amounts across two currencies are not comparable and DropHawk will not rank them against each other.",
-  "- There is no public write API. Price monitors and email alerts need a signed-in account at https://drophawk.net/signup, which is a human's job, not an agent's.",
-].join("\n");
+import { CATALOGUE_LIMITS } from "./generated/catalogue-limits.js";
+
+/** What DropHawk does not know, word for word as the website says it (spec/catalogue-limits.txt, inlined by `bun run generate`). */
+export { CATALOGUE_LIMITS };
 
 const BEST_PRICE_MEANING =
   "best_price is the lowest price among retailers that have the Product in stock, and it can be withheld: " +

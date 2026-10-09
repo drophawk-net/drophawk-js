@@ -11,7 +11,7 @@ function websiteLimits(): string {
 }
 
 describe("catalogue limits", () => {
-  it("say exactly what spec/catalogue-limits.txt says (update copy.ts when the synced file changes)", () => {
+  it("say exactly what spec/catalogue-limits.txt says", () => {
     expect(squash(CATALOGUE_LIMITS)).toBe(squash(websiteLimits()));
   });
 });

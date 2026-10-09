@@ -17,13 +17,15 @@ The DropHawk backend is not in this repository.
 Two files under `spec/` are copies of files that live in the private DropHawk repository, and they are the only inputs this repository takes from it:
 
 - `spec/developer-v1.openapi.json` is the OpenAPI document for the developer API.
-  The SDK's types in `packages/sdk/src/generated/api.ts` are generated from it, and CI fails when they are stale.
+  The SDK's types in `packages/sdk/src/generated/api.ts` are generated from it.
 - `spec/catalogue-limits.txt` is the catalogue caveats that the DropHawk website tells agents.
-  The MCP server repeats them in its instructions, and a test fails if `packages/mcp/src/copy.ts` drifts from this file.
+  `packages/mcp/src/generated/catalogue-limits.ts` inlines it, so the published MCP package needs no spec file at runtime.
 
-Do not edit either file by hand.
-A workflow in the DropHawk repository opens a pull request here whenever the source files change on its `main` branch.
-When that pull request lands, run `bun run generate` in `packages/sdk`, commit the regenerated types, and update `copy.ts` if the limits text changed.
+Do not edit the spec files or the generated files by hand.
+A workflow in the DropHawk repository runs whenever the source files change on its `main` branch.
+It copies both files here, runs `bun install --frozen-lockfile` and `bun run generate`, and opens or updates one pull request containing the spec and the regenerated code together.
+Because the pull request is pushed with a GitHub App token, CI runs on it, and it arrives complete and green.
+CI also fails any pull request whose generated files do not match `spec/`.
 
 ## Development
 
@@ -31,7 +33,9 @@ This is a [Bun](https://bun.sh) workspace.
 
 ```sh
 bun install --frozen-lockfile
+bun run generate                          # after changing spec/
 bun run --filter @drophawk/sdk generate -- --check
+bun run --filter @drophawk/mcp generate -- --check
 bun run --filter @drophawk/sdk test
 bun run --filter @drophawk/sdk build      # the MCP package compiles against the SDK's dist
 bun run --filter @drophawk/mcp typecheck

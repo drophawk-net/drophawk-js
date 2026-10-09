@@ -33,6 +33,10 @@ jobs:
         working-directory: packages/sdk
         run: bun run generate -- --check
 
+      - name: MCP catalogue limits are up to date
+        working-directory: packages/mcp
+        run: bun run generate -- --check
+
       - name: Type check
         run: bun run --filter @drophawk/sdk typecheck
 

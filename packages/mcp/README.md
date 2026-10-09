@@ -124,6 +124,7 @@ Diagnostics go to stderr, because stdout carries the protocol.
 
 ## Maintaining this package
 
+The catalogue limits in the server instructions are generated from `spec/catalogue-limits.txt` (`bun run generate` here); CI fails when they are stale.
 The server is built on `@modelcontextprotocol/server`, the stable v2 line of the MCP TypeScript SDK, and on `@drophawk/sdk` through the workspace.
 Build the SDK before this package (`bun run --filter @drophawk/sdk build`), because this package compiles and tests against the SDK's `dist`.
 `bun run test` here builds the server and then runs the unit tests and an end-to-end test that spawns `dist/bin.js` over stdio against a local stub API.

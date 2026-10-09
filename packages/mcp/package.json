@@ -26,6 +26,7 @@
   "files": ["dist", "README.md"],
   "publishConfig": { "access": "public" },
   "scripts": {
+    "generate": "bun scripts/generate.ts",
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "bun run build && vitest run",
