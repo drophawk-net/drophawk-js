@@ -1,0 +1,54 @@
+{
+  "name": "@drophawk/sdk",
+  "version": "0.0.0",
+  "description": "TypeScript client for the DropHawk developer API: Product-level PC component prices with buy links.",
+  "keywords": [
+    "drophawk",
+    "prices",
+    "price-tracking",
+    "pc-components",
+    "api-client"
+  ],
+  "homepage": "https://developers.drophawk.net",
+  "bugs": { "url": "https://github.com/drophawk-net/drophawk-js/issues" },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/drophawk-net/drophawk-js.git",
+    "directory": "packages/sdk"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "generate": "bun scripts/generate.ts",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "prepack": "bun run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "openapi-typescript": "^7.9.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

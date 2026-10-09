@@ -1,0 +1,104 @@
+name: Release
+
+# Versions and publishes the packages under packages/.
+#
+# - "version" opens or updates the "chore: version packages" PR while changesets
+#   are pending. It holds no publish credentials.
+# - "publish" runs only when no changesets are pending, i.e. after that PR is
+#   merged, and publishes through npm trusted publishing (OIDC): no long-lived
+#   npm token exists. npm adds provenance automatically for a public repository.
+#
+# The trusted publisher on npmjs.com is bound to this exact file name, so do not
+# rename it. See packages/sdk/README.md for the one-off first publish.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/**"
+      - ".changeset/**"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/release.yml"
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    if: github.repository == 'drophawk-net/drophawk-js'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      has-changesets: ${{ steps.changesets.outputs.has-changesets }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.3.10"
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - id: changesets
+        uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+        with:
+          version-script: bun run version-packages
+          commit-message: "chore: version packages"
+          pr-title: "chore: version packages"
+        env:
+          # changelog-github looks up PR and author links through the API; this
+          # is read by the version script, not by the action itself.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish:
+    needs: version
+    if: github.repository == 'drophawk-net/drophawk-js' && needs.version.outputs.has-changesets == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.3.10"
+
+      # Trusted publishing needs npm >= 11.5.1 and Node >= 22.14. setup-node v7
+      # does not export a dummy NODE_AUTH_TOKEN, which would stop npm from using OIDC.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # Fails this job, and only this job, until the repository has a LICENSE and every package.json a
+      # `license` field. Pull requests are not affected. Also copies LICENSE into each package directory.
+      - name: Publish prerequisites (license)
+        run: bun scripts/prepare-publish.ts
+
+      - name: Test
+        run: |
+          bun run --filter @drophawk/sdk typecheck
+          bun run --filter @drophawk/sdk test
+          bun run --filter @drophawk/sdk build
+          bun run --filter @drophawk/mcp typecheck
+          bun run --filter @drophawk/mcp test
+
+      - name: Publish unpublished versions
+        run: bun run release
+
+      - name: Push release tags
+        run: git push origin --tags
