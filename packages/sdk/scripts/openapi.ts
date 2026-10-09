@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import openapiTS, { astToString } from "openapi-typescript";
+import ts from "typescript";
 
 /** The checked-in OpenAPI document, the source of truth for the SDK's types. */
 export const OPENAPI_PATH = fileURLToPath(
@@ -32,10 +33,37 @@ function stripOpenObjects(node: unknown): void {
   }
 }
 
+type SchemaObject = { anyOf?: SchemaObject[]; enum?: unknown[]; type?: string };
+
+/**
+ * The API documents its extensible enums as `anyOf: [{enum: [...]}, {type: string}]`: the listed values are the ones
+ * known today, and more may arrive within v1. openapi-typescript renders that as `string | ("A" | "B")`, which TypeScript
+ * collapses to `string`, so editors lose the known values. Rendering `"A" | "B" | (string & {})` keeps the autocomplete
+ * and the narrowing while still accepting a value added later.
+ */
+function openEnum(schema: SchemaObject): ts.TypeNode | undefined {
+  const [a, b, ...rest] = schema.anyOf ?? [];
+  if (!a || !b || rest.length > 0) return undefined;
+  const [known, plain] = a.enum ? [a, b] : [b, a];
+  if (!known.enum || known.enum.some((v) => typeof v !== "string") || plain.type !== "string" || plain.enum) return undefined;
+  const { factory } = ts;
+  const literals = (known.enum as string[]).map((v) => factory.createLiteralTypeNode(factory.createStringLiteral(v)));
+  const anyString = factory.createParenthesizedType(
+    factory.createIntersectionTypeNode([
+      factory.createKeywordTypeNode(ts.SyntaxKind.StringKeyword),
+      factory.createTypeLiteralNode([]),
+    ]),
+  );
+  return factory.createUnionTypeNode([...literals, anyString]);
+}
+
 /** Generates the TypeScript declarations for the checked-in OpenAPI document. */
 export async function generateTypes(): Promise<string> {
   const schema = JSON.parse(readFileSync(OPENAPI_PATH, "utf8"));
   stripOpenObjects(schema);
-  const ast = await openapiTS(schema, { alphabetize: true });
+  const ast = await openapiTS(schema, {
+    alphabetize: true,
+    transform: (schemaObject) => openEnum(schemaObject as SchemaObject),
+  });
   return BANNER + astToString(ast);
 }

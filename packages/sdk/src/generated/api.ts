@@ -222,7 +222,7 @@ export interface components {
              *
              *      Never rewrite a buy_url you were given: use it as is.
              */
-            client?: string;
+            client?: "mcp" | (string & {});
             /**
              * identifiers
              * @description The Products to get, each a model_slug or a raw model number. At least 1
@@ -349,6 +349,7 @@ export interface components {
         "drophawk.developer.v1.DailyLow": {
             /**
              * date
+             * Format: date
              * @description The day, as an ISO 8601 calendar date (YYYY-MM-DD) in UTC.
              */
             date: string;
@@ -374,6 +375,7 @@ export interface components {
         "drophawk.developer.v1.DatedPrice": {
             /**
              * date
+             * Format: date
              * @description The day, as an ISO 8601 calendar date (YYYY-MM-DD) in UTC.
              */
             date: string;
@@ -412,7 +414,7 @@ export interface components {
              *      points in this series span more than one currency. More may be added within v1; treat an
              *      unrecognised reason as the series being unknown.
              */
-            withheld_reason?: string | null;
+            withheld_reason?: "NO_DATA" | "MIXED_CURRENCY" | (string & {});
         };
         /**
          * GetProductRequest
@@ -428,7 +430,7 @@ export interface components {
              *
              *      Never rewrite a buy_url you were given: use it as is.
              */
-            client?: string;
+            client?: "mcp" | (string & {});
             /**
              * model_slug
              * @description The Product's model_slug, or its raw model number. At most 256 bytes.
@@ -492,9 +494,10 @@ export interface components {
         "drophawk.developer.v1.Money": {
             /**
              * amount
-             * @description The amount as a decimal string with a "." separator and no digit grouping,
-             *      for example "1299.00". It is a string rather than a JSON number so the
-             *      value is exact; parse it with a decimal type, not a binary float.
+             * @description The amount as a non-negative decimal string with exactly two decimal
+             *      places, a "." separator and no digit grouping, for example "1299.00". It is
+             *      a string rather than a JSON number so the value is exact; parse it with a
+             *      decimal type, not a binary float.
              */
             amount: string;
             /**
@@ -519,6 +522,7 @@ export interface components {
             brand: components["schemas"]["drophawk.developer.v1.BrandRef"];
             /**
              * buy_url
+             * Format: uri
              * @description A link that sends a buyer to wherever the Product currently has its
              *      best_price, chosen when the link is followed rather than when this
              *      response was produced, so it stays right however long it is kept; it
@@ -588,8 +592,9 @@ export interface components {
             };
             /**
              * url
+             * Format: uri
              * @description The Product's page on drophawk.net, for linking a person to the full price
-             *      comparison and history.
+             *      comparison and history. An absolute URL.
              */
             url: string;
         };
@@ -606,11 +611,12 @@ export interface components {
             /**
              * height
              * Format: int32
-             * @description The image's height in pixels.
+             * @description The image's height in pixels, at least 1.
              */
             height: number;
             /**
              * url
+             * Format: uri
              * @description An absolute HTTPS URL for the image. The URL is immutable: the bytes behind
              *      it never change, so it can be cached indefinitely.
              */
@@ -618,7 +624,7 @@ export interface components {
             /**
              * width
              * Format: int32
-             * @description The image's width in pixels.
+             * @description The image's width in pixels, at least 1.
              */
             width: number;
         };
@@ -653,9 +659,11 @@ export interface components {
              * all_time_low_withheld_reason
              * @description Why all_time_low is absent, and itself absent when all_time_low is
              *      present: "NO_DATA" when DropHawk has no price history for the Product, or
-             *      "MIXED_CURRENCY" when that history spans more than one currency.
+             *      "MIXED_CURRENCY" when that history spans more than one currency. More may
+             *      be added within v1; treat an unrecognised reason as the price being
+             *      unknown.
              */
-            all_time_low_withheld_reason?: string | null;
+            all_time_low_withheld_reason?: "NO_DATA" | "MIXED_CURRENCY" | (string & {});
             /**
              * best_price
              * @description The lowest current price among the stores that have the Product in stock.
@@ -675,8 +683,10 @@ export interface components {
              *      "OUT_OF_STOCK" when stores list the Product at a price but none has it in
              *      stock, "NO_DATA" when no store lists it at a price at all, or
              *      "MIXED_CURRENCY" when the in-stock prices are in more than one currency.
+             *      More may be added within v1; treat an unrecognised reason as the price
+             *      being unknown.
              */
-            best_price_withheld_reason?: string | null;
+            best_price_withheld_reason?: "NO_DATA" | "OUT_OF_STOCK" | "MIXED_CURRENCY" | (string & {});
             /**
              * in_stock_count
              * Format: int32
@@ -731,7 +741,7 @@ export interface components {
              *      Product). More may be added within v1; treat an unrecognised reason as a
              *      failure to resolve this identifier.
              */
-            reason: string;
+            reason: "PRODUCT_NOT_FOUND" | "INVALID_IDENTIFIER" | (string & {});
         };
         /**
          * SearchProductsRequest
@@ -747,7 +757,7 @@ export interface components {
              *
              *      Never rewrite a buy_url you were given: use it as is.
              */
-            client?: string;
+            client?: "mcp" | (string & {});
             /**
              * page_size
              * Format: int32
@@ -810,16 +820,17 @@ export interface components {
              *      - "number": a number, in SpecValue.number_value.
              *      - "boolean": a yes/no value, in SpecValue.bool_value.
              *
-             *      More types may be added within v1. A Product's specs never holds a value
-             *      for a key whose type you do not recognise, so ignore such a Spec.
+             *      More types may be added within v1, so the values listed in the schema are
+             *      the known ones, not a closed set. A Product's specs never holds a value for
+             *      a key whose type you do not recognise, so ignore such a Spec.
              */
-            type: string;
+            type: "string" | "number" | "boolean" | (string & {});
             /**
              * unit
              * @description The unit the value is measured in, for example "GB" or "W", which a
              *      Product's SpecValue.unit repeats. Absent when the Spec has no unit.
              */
-            unit?: string | null;
+            unit?: string;
         };
         /**
          * SpecValue
@@ -904,8 +915,11 @@ export interface components {
             metadata?: {
                 [key: string]: string;
             };
-            /** @description The reason, in UPPER_SNAKE_CASE. */
-            reason: string;
+            /**
+             * @description The reason, in UPPER_SNAKE_CASE.
+             *     The listed values are the known ones, not a closed set: more may be added within v1, so treat an unrecognised reason by its HTTP status.
+             */
+            reason: "PRODUCT_NOT_FOUND" | "INVALID_IDENTIFIER" | "INVALID_QUERY" | "INVALID_PAGE_TOKEN" | "INVALID_PAGE_SIZE" | "EMPTY_BATCH" | "BATCH_TOO_LARGE" | "INVALID_REQUEST" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "REQUEST_TOO_LARGE" | "RATE_LIMITED" | "INTERNAL" | "UNAVAILABLE" | (string & {});
         };
         /** @description An error response. */
         "google.rpc.Status": {
@@ -1122,7 +1136,7 @@ export interface operations {
                  *
                  *      Never rewrite a buy_url you were given: use it as is.
                  */
-                client?: string;
+                client?: ("mcp" | (string & {})) | "mcp" | string;
                 /**
                  * @description The most Products to return. Defaults to 20 when 0 or omitted; a value over
                  *      50 is treated as 50, and a negative value is an error.
@@ -1180,7 +1194,7 @@ export interface operations {
                  *
                  *      Never rewrite a buy_url you were given: use it as is.
                  */
-                client?: string;
+                client?: ("mcp" | (string & {})) | "mcp" | string;
             };
             header?: never;
             path: {
