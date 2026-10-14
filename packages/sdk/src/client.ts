@@ -1,5 +1,5 @@
 import { canSetUserAgent } from "./runtime.js";
-import { DropHawkError } from "./errors.js";
+import { DropHawkError, readBodyText } from "./errors.js";
 import type {
   DailyLows,
   ListBrandsResponse,
@@ -47,12 +47,15 @@ export interface CallOptions {
  */
 export class DropHawk {
   readonly #baseUrl: string;
+  readonly #origin: string;
   readonly #fetch: typeof fetch;
   readonly #userAgent: string | undefined;
   readonly #client: "mcp" | undefined;
 
   constructor(options: DropHawkOptions = {}) {
-    this.#baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+    const base = parseBaseUrl(options.baseUrl ?? DEFAULT_BASE_URL);
+    this.#baseUrl = base.baseUrl;
+    this.#origin = base.origin;
     this.#fetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
     this.#userAgent = canSetUserAgent() ? `drophawk-sdk/${VERSION}${options.userAgent ? ` ${options.userAgent}` : ""}` : undefined;
     this.#client = options.client;
@@ -145,7 +148,7 @@ export class DropHawk {
     }
     const headers: Record<string, string> = { Accept: "application/json" };
     if (this.#userAgent) headers["User-Agent"] = this.#userAgent;
-    const init: RequestInit = { method, headers, redirect: "follow" };
+    const init: RequestInit = { method, headers, redirect: "follow", credentials: "omit" };
     if (opts.json !== undefined) {
       headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(opts.json);
@@ -153,10 +156,16 @@ export class DropHawk {
     if (opts.signal) init.signal = opts.signal;
 
     const response = await this.#fetch(url.toString(), init);
+    // Redirects are followed (a merged Product answers 301 to its survivor, on the same origin), but the final URL must still be ours.
+    // Anything else is a misconfigured or hostile endpoint, and its answer is not read. An empty url means the fetch implementation does not report one.
+    if (response.url && safeOrigin(response.url) !== this.#origin) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new DropHawkError({ status: response.status, reason: "INVALID_RESPONSE", message: "DropHawk API request was redirected to a different origin; refusing to use the answer" });
+    }
     if (!response.ok) throw await DropHawkError.fromResponse(response);
     // Reading the body may fail for reasons that are not ours to hide (an abort, a dropped connection): let those through.
-    // Only a body that is not valid JSON is reported as INVALID_RESPONSE.
-    const text = await response.text();
+    // Only a body that is not valid JSON, or is too large, is reported as INVALID_RESPONSE.
+    const text = await readBodyText(response);
     try {
       return JSON.parse(text) as T;
     } catch {
@@ -186,4 +195,33 @@ function segment(identifier: string): string {
     });
   }
   return encodeURIComponent(identifier);
+}
+
+/**
+ * Validates the API origin: http(s) only, no credentials, query or fragment.
+ * Trailing slashes are stripped with a linear scan (a regex like /\/+$/ backtracks quadratically on long runs of slashes).
+ */
+function parseBaseUrl(value: string): { baseUrl: string; origin: string } {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new TypeError(`baseUrl must be an absolute http(s) URL, got ${JSON.stringify(value)}`);
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") throw new TypeError(`baseUrl must use http or https, got ${url.protocol}`);
+  if (url.username !== "" || url.password !== "") throw new TypeError("baseUrl must not contain credentials");
+  if (url.search !== "" || url.hash !== "" || value.includes("?") || value.includes("#")) throw new TypeError("baseUrl must not contain a query string or fragment");
+  let path = url.pathname;
+  let end = path.length;
+  while (end > 0 && path.charCodeAt(end - 1) === 47) end--;
+  path = path.slice(0, end);
+  return { baseUrl: url.origin + path, origin: url.origin };
+}
+
+function safeOrigin(value: string): string | undefined {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return undefined;
+  }
 }

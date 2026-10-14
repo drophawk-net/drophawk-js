@@ -111,3 +111,18 @@ describe("DropHawkError", () => {
     });
   });
 });
+
+describe("retry_after_seconds that is not a string", () => {
+  it("accepts a numeric value without throwing", async () => {
+    const body = errorBody(8, "x", "RATE_LIMITED", { retry_after_seconds: 7 as unknown as string });
+    const err = await failWith(json(body, { status: 429 }));
+    expect(err.retryAfterSeconds).toBe(7);
+  });
+  it("ignores objects, booleans and negative numbers, falling back to the header", async () => {
+    for (const bad of [{}, true, -3, null, [1]]) {
+      const body = errorBody(8, "x", "RATE_LIMITED", { retry_after_seconds: bad as unknown as string });
+      const err = await failWith(json(body, { status: 429, headers: { "retry-after": "4" } }));
+      expect(err.retryAfterSeconds).toBe(4);
+    }
+  });
+});

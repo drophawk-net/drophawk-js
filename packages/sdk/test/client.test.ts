@@ -292,3 +292,97 @@ describe("SpecValue", () => {
     expect([ok, none, two, wrong]).toBeDefined();
   });
 });
+
+describe("hardening", () => {
+  const stream = (chunks: Uint8Array[]) =>
+    new ReadableStream<Uint8Array>({
+      pull(controller) {
+        const next = chunks.shift();
+        if (next) controller.enqueue(next);
+        else controller.close();
+      },
+    });
+
+  it("never sends credentials", async () => {
+    const m = mockFetch(() => json({ brands: [] }));
+    await new DropHawk({ fetch: m.fetch }).listBrands();
+    expect(m.calls[0]!.init.credentials).toBe("omit");
+  });
+
+  it("rejects a body over 8 MiB with INVALID_RESPONSE and stops reading", async () => {
+    const chunk = new Uint8Array(1024 * 1024).fill(0x20);
+    let pulled = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled++;
+        controller.enqueue(chunk);
+      },
+    });
+    const m = mockFetch(() => new Response(body, { status: 200 }));
+    const err = await new DropHawk({ fetch: m.fetch }).listBrands().catch((e) => e);
+    expect(err).toBeInstanceOf(DropHawkError);
+    expect(err.reason).toBe("INVALID_RESPONSE");
+    expect(pulled).toBeLessThan(20);
+  });
+
+  it("caps error bodies too", async () => {
+    const m = mockFetch(() => new Response(stream(Array.from({ length: 10 }, () => new Uint8Array(1024 * 1024))), { status: 500 }));
+    const err = await new DropHawk({ fetch: m.fetch }).listBrands().catch((e) => e);
+    expect(err).toBeInstanceOf(DropHawkError);
+    expect(err.reason).toBe("INVALID_RESPONSE");
+  });
+
+  it("rejects an oversized declared content-length without reading", async () => {
+    const m = mockFetch(() => new Response("{}", { status: 200, headers: { "content-length": String(9 * 1024 * 1024) } }));
+    const err = await new DropHawk({ fetch: m.fetch }).listBrands().catch((e) => e);
+    expect(err.reason).toBe("INVALID_RESPONSE");
+  });
+
+  it("still reads an ordinary body", async () => {
+    const m = mockFetch(() => new Response(stream([new TextEncoder().encode('{"brands":'), new TextEncoder().encode("[]}")]), { status: 200 }));
+    expect(await new DropHawk({ fetch: m.fetch }).listBrands()).toEqual({ brands: [] });
+  });
+
+  it("accepts a same-origin redirect (merged Product)", async () => {
+    const m = mockFetch(() => json(product("survivor"), { url: "https://api.drophawk.net/v1/products/survivor", redirected: true }));
+    expect((await new DropHawk({ fetch: m.fetch }).getProduct("old")).model_slug).toBe("survivor");
+  });
+
+  it("rejects a redirect that ends on another origin", async () => {
+    const m = mockFetch(() => json({ brands: [] }, { url: "https://evil.example/v1/brands", redirected: true }));
+    const err = await new DropHawk({ fetch: m.fetch }).listBrands().catch((e) => e);
+    expect(err).toBeInstanceOf(DropHawkError);
+    expect(err.reason).toBe("INVALID_RESPONSE");
+  });
+
+  it("rejects a redirect to another origin even when the answer is an error", async () => {
+    const m = mockFetch(() => json({}, { status: 500, url: "http://api.drophawk.net/v1/brands", redirected: true }));
+    const err = await new DropHawk({ fetch: m.fetch }).listBrands().catch((e) => e);
+    expect(err.reason).toBe("INVALID_RESPONSE");
+  });
+});
+
+describe("baseUrl validation", () => {
+  it.each(["ftp://api.drophawk.net", "javascript:alert(1)", "not a url", "https://api.drophawk.net?x=1", "https://api.drophawk.net/#frag", "https://user:pw@api.drophawk.net", "https://api.drophawk.net?", ""])(
+    "rejects %j",
+    (baseUrl) => {
+      expect(() => new DropHawk({ baseUrl })).toThrow(TypeError);
+    },
+  );
+
+  it("strips trailing slashes and keeps a path prefix", async () => {
+    const m = mockFetch(() => json({ brands: [] }));
+    await new DropHawk({ fetch: m.fetch, baseUrl: "https://gw.example.com/api///" }).listBrands();
+    expect(m.calls[0]!.url.href).toBe("https://gw.example.com/api/v1/brands");
+  });
+
+  it("handles a huge run of slashes quickly", () => {
+    const start = performance.now();
+    new DropHawk({ baseUrl: "https://api.drophawk.net" + "/".repeat(200_000) });
+    expect(performance.now() - start).toBeLessThan(500);
+  });
+
+  it("accepts http for local development", () => {
+    expect(() => new DropHawk({ baseUrl: "http://127.0.0.1:8080" })).not.toThrow();
+  });
+});
