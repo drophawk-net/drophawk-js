@@ -138,11 +138,11 @@ The release workflow rewrites the `workspace:` range on `@drophawk/sdk` to a rea
 This is a one-off step for a human who owns the `@drophawk` npm organisation.
 No agent or workflow does it.
 
-Prerequisites, both already met (the same as the SDK's):
+Prerequisites (the same as the SDK's):
 
 - The repository is MIT licensed.
 - The GitHub repository, `drophawk-net/drophawk-js`, is public.
-  Trusted publishing only attests provenance for public repositories.
+  It is private until it is deliberately made public, and trusted publishing only attests provenance for public repositories, so make it public before the first automated release.
 
 npm packs a `LICENSE` file automatically once it exists in the package directory.
 The root `LICENSE` is the single source, so `scripts/prepare-publish.ts` copies it into each package directory at publish time (the copies are gitignored, never committed).
@@ -166,5 +166,8 @@ Publish from a throwaway checkout after the rewrite:
 4. Still in `packages/mcp`, run `npm publish --provenance=false`, signing in with 2FA.
    This publishes the real `0.1.0` as `latest`; the `prepack` script builds it first.
    Provenance is off only because a local publish cannot produce it; trusted publishing adds it from the next release on.
-5. On npmjs.com open `@drophawk/mcp` > Settings > Trusted Publisher, choose GitHub Actions, and enter organization or user `drophawk-net`, repository `drophawk-js`, workflow filename `release.yml`, and no environment.
-6. Tag the release that the workflow could not: `git tag @drophawk/mcp@0.1.0 <version-commit>` and `git push origin @drophawk/mcp@0.1.0`.
+5. On npmjs.com open `@drophawk/mcp` > Settings > Trusted Publisher, choose GitHub Actions, and enter organization or user `drophawk-net`, repository `drophawk-js`, workflow filename `release.yml`, and environment `npm`.
+   The publish job runs in the GitHub environment `npm`, and npm rejects the token exchange if the two names differ.
+6. In the package's publishing access settings, choose "Require two-factor authentication and disallow tokens".
+   This is mandatory, not optional: it leaves trusted publishing as the only way to publish.
+7. Tag the release that the workflow could not: `git tag @drophawk/mcp@0.1.0 <version-commit>` and `git push origin @drophawk/mcp@0.1.0`.

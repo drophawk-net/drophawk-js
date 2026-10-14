@@ -5,8 +5,7 @@
   "scripts": {
     "changeset": "changeset",
     "generate": "bun run --filter @drophawk/sdk generate && bun run --filter @drophawk/mcp generate",
-    "version-packages": "changeset version && bun packages/sdk/scripts/sync-version.ts && bun packages/mcp/scripts/sync-version.ts",
-    "release": "bun scripts/prepare-publish.ts && bun run --filter '@drophawk/sdk' build && bun run --filter '@drophawk/mcp' build && bun scripts/resolve-workspace-deps.ts && changeset publish"
+    "version-packages": "changeset version && bun packages/sdk/scripts/sync-version.ts && bun packages/mcp/scripts/sync-version.ts"
   },
   "devDependencies": {
     "@changesets/changelog-github": "^1.0.1",

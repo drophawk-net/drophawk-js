@@ -1,15 +1,18 @@
 name: Release
 
-# Versions and publishes the packages under packages/.
+# Versions and publishes the packages under packages/ in three jobs with separate privileges.
 #
-# - "version" opens or updates the "chore: version packages" PR while changesets
-#   are pending. It holds no publish credentials.
-# - "publish" runs only when no changesets are pending, i.e. after that PR is
-#   merged, and publishes through npm trusted publishing (OIDC): no long-lived
-#   npm token exists. npm adds provenance automatically for a public repository.
+# - "version" opens or updates the "chore: version packages" PR while changesets are pending.
+#   It holds no npm credentials. It pushes with a GitHub App token so that CI runs on that PR.
+# - "build" runs when no changesets are pending, i.e. after that PR is merged. It installs without
+#   lifecycle scripts, tests, builds and packs tarballs for versions that are not on npm yet, and uploads them.
+#   It has read-only repository access and no id-token, so nothing it runs can publish.
+# - "publish" runs in the `npm` environment, downloads the tarballs and publishes exactly those through npm
+#   trusted publishing (OIDC): no long-lived npm token exists. It runs no repository code and installs nothing.
+#   npm adds provenance automatically for a public repository.
 #
-# The trusted publisher on npmjs.com is bound to this exact file name, so do not
-# rename it. See packages/sdk/README.md for the one-off first publish.
+# The trusted publisher on npmjs.com is bound to this exact file name and to the environment `npm`,
+# so do not rename either. See packages/sdk/README.md for the one-off first publish.
 
 on:
   push:
@@ -19,17 +22,23 @@ on:
       - ".changeset/**"
       - "package.json"
       - "bun.lock"
+      - "bunfig.toml"
+      - "scripts/**"
       - ".github/workflows/release.yml"
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   version:
     if: github.repository == 'drophawk-net/drophawk-js'
     runs-on: ubuntu-latest
+    # The `release` environment (restricted to main) holds the GitHub App credentials:
+    #   variable DROPHAWK_JS_RELEASE_CLIENT_ID, secret DROPHAWK_JS_RELEASE_PRIVATE_KEY.
+    environment: release
+    # contents and pull-requests write are only used by the fallback below, when the App is not configured.
+    # Once the App is in place they can be reduced to `contents: read`.
     permissions:
       contents: write
       pull-requests: write
@@ -37,6 +46,8 @@ jobs:
       has-changesets: ${{ steps.changesets.outputs.has-changesets }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -47,7 +58,23 @@ jobs:
           node-version: 24
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      # A pull request opened with the default GITHUB_TOKEN does not trigger workflows, so CI would never run on it.
+      # The App token does. The token is scoped to this repository and expires with the job.
+      - id: app-token
+        if: vars.DROPHAWK_JS_RELEASE_CLIENT_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.DROPHAWK_JS_RELEASE_CLIENT_ID }}
+          private-key: ${{ secrets.DROPHAWK_JS_RELEASE_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Note when the release App is not configured
+        if: steps.app-token.outcome == 'skipped'
+        run: |
+          echo "::warning title=Release App not configured::The variable DROPHAWK_JS_RELEASE_CLIENT_ID is not set on the 'release' environment, so the version PR is opened with GITHUB_TOKEN and CI will not run on it automatically. Close and reopen the PR to trigger CI, or configure the App (see the README)."
 
       - id: changesets
         uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
@@ -56,38 +83,32 @@ jobs:
           commit-message: "chore: version packages"
           pr-title: "chore: version packages"
         env:
-          # changelog-github looks up PR and author links through the API; this
-          # is read by the version script, not by the action itself.
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Used to push the version branch and open the PR, and by changelog-github to look up PR and author links.
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
 
-  publish:
+  build:
     needs: version
     if: github.repository == 'drophawk-net/drophawk-js' && needs.version.outputs.has-changesets == 'false'
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      id-token: write
+      contents: read
+    outputs:
+      has-tarballs: ${{ steps.pack.outputs.has-tarballs }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: "1.3.10"
 
-      # Trusted publishing needs npm >= 11.5.1 and Node >= 22.14. setup-node v7
-      # does not export a dummy NODE_AUTH_TOKEN, which would stop npm from using OIDC.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-          registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      # Fails this job, and only this job, until the repository has a LICENSE and every package.json a
-      # `license` field. Pull requests are not affected. Also copies LICENSE into each package directory.
-      - name: Publish prerequisites (license)
-        run: bun scripts/prepare-publish.ts
+        run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Test
         run: |
@@ -97,8 +118,76 @@ jobs:
           bun run --filter @drophawk/mcp typecheck
           bun run --filter @drophawk/mcp test
 
-      - name: Publish unpublished versions
-        run: bun run release
+      # Fails this job until the repository has a LICENSE and every package.json a `license` field.
+      # Also copies LICENSE into each package directory, then rewrites `workspace:` ranges for the tarballs.
+      - id: pack
+        name: Pack tarballs for versions not yet on npm
+        run: |
+          bun scripts/prepare-publish.ts
+          bun run --filter @drophawk/sdk build
+          bun run --filter @drophawk/mcp build
+          bun scripts/resolve-workspace-deps.ts
+          bun scripts/pack-unpublished.ts release-tarballs
 
+      - name: Upload tarballs
+        if: steps.pack.outputs.has-tarballs == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-tarballs
+          path: release-tarballs/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: build
+    if: github.repository == 'drophawk-net/drophawk-js' && needs.build.outputs.has-tarballs == 'true'
+    runs-on: ubuntu-latest
+    # The npm trusted publisher is configured for this environment name.
+    environment: npm
+    permissions:
+      contents: write # push release tags
+      id-token: write # npm trusted publishing
+    steps:
+      # Only for the commit to tag. No repository script runs in this job, and nothing is installed.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-tarballs
+          path: release-tarballs
+
+      # Trusted publishing needs npm >= 11.5.1 and Node >= 22.14. setup-node v7
+      # does not export a dummy NODE_AUTH_TOKEN, which would stop npm from using OIDC.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Publish tarballs
+        run: |
+          set -euo pipefail
+          : > release-tags.txt
+          for tarball in release-tarballs/*.tgz; do
+            id="$(tar -xzOf "$tarball" package/package.json | node -p 'const p = JSON.parse(require("fs").readFileSync(0, "utf8")); `${p.name}@${p.version}`')"
+            echo "Publishing $id from $tarball"
+            npm publish "$tarball" --access public
+            echo "$id" >> release-tags.txt
+          done
+
+      # The token lives only in this step's environment, as a one-off request header. No credential is persisted in .git/config.
       - name: Push release tags
-        run: git push origin --tags
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
+          while read -r tag; do
+            git tag "$tag" "$GITHUB_SHA"
+            git push origin "refs/tags/$tag"
+          done < release-tags.txt
