@@ -12,31 +12,51 @@ const MAX_URL_LENGTH = 2048;
 // Control characters (including CR, LF, tab), line and paragraph separators, and invisible format characters
 // such as zero-width spaces and bidi overrides, which can hide or reorder text.
 const CONTROL = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu;
-const MARKDOWN = /[\\`*[\]()<>|~#]/g;
+// "&" is escaped so that an entity such as &#58; is shown as typed and never decodes into a link.
+const MARKDOWN = /[\\`*[\]()<>|~#&]/g;
 
 // Link-looking text in free-text fields is defanged so a model reads it as text and never offers it as a link.
 // One scheme throughout:
-//   - every "://" becomes "[:]//", whatever precedes it        https://evil.example/pay -> https[:]//evil[.]example/pay
-//   - every dot in a host name becomes "[.]", both after "://" and in bare domain names (a run of labels ending in an
-//     alphabetic or punycode top-level label) and bare IPv4 addresses
-//                                                             www.evil.example -> www[.]evil[.]example, 1.2.3.4/x -> 1[.]2[.]3[.]4/x
-// Fullwidth and ideographic lookalikes of ".", ":" and "/" count as those characters (and become their ASCII defanged form),
-// so https：／／evil。com is caught too. Numbers such as "1.5", "2.5GbE" or "v1.2.3.4" are left alone.
-// Real links (url, buy_url, image_url) never pass through here: they are checked by safeUrl and copied verbatim.
+//   - every "://" (and "://"-like separator, below) becomes "[:]//", whatever precedes it
+//                                                             https://evil.example/pay -> https[:]//evil[.]example/pay
+//   - every dot in the host after it becomes "[.]"
+//   - every other dot that follows a letter, digit or combining mark and precedes a top-level-domain-shaped label
+//     (two or more letters, or xn-- punycode, not followed by another letter, digit, mark or hyphen) becomes "[.]",
+//     whatever precedes the domain                            www.evil.example -> www[.]evil[.]example, x-.evil.example -> x-.evil[.]example
+//   - every dot in a bare IPv4 address becomes "[.]"           1.2.3.4/x -> 1[.]2[.]3[.]4/x
+// Lookalikes count as the ASCII character and become its defanged form: fullwidth, ideographic and small dots; fullwidth,
+// small, presentation-form, modifier (U+A789) and ratio (U+2236) colons; fullwidth, fraction and division slashes and
+// backslashes; fullwidth digits in IPv4. "https:/host" and "https:\\host" count as separators too, but a single slash only
+// after http or https, so "3:/4" is left alone. The parenthesised and "digit full stop" characters U+2488-U+249B and
+// U+1F100-U+1F10A are first rewritten to their compatibility form ("⒈" becomes "1."). Numbers such as "1.5", "2.5GbE"
+// or "v1.2.3.4" are left alone. Real links (url, buy_url, image_url) never pass through here: safeUrl checks them.
 //
-// Every pattern is linear: SCHEME_SEP is anchored on a literal separator, and the domain patterns can only start where
-// the lookbehind allows, at the start of a run, with labels separated by a single dot. cleanText also caps the input before any of this runs.
+// Not done, because it would rewrite ordinary product text: NFKC normalisation of whole strings (it turns "™" into "TM"),
+// and treating text without a scheme separator or a top-level-domain-shaped label as a link.
+//
+// Every pattern is linear: SCHEME_SEP is anchored on a separator character, the dot patterns look at most one label
+// ahead of each dot, and IPv4 matches a bounded run. cleanText also caps the input before any of this runs.
 const DOT = "[.\\uFF0E\\u3002\\uFF61\\u2024\\uFE52]";
 const DOTS = new RegExp(DOT, "gu");
-const SCHEME_SEP = /[:\uFF1A\uFE55\uFE13][/\uFF0F\u2044\u2215]{2}([^\s/\uFF0F\u2044\u2215?#]*)/gu;
-const LABEL = "[\\p{L}\\p{N}](?:[\\p{L}\\p{N}-]{0,61}[\\p{L}\\p{N}])?";
-const BARE_DOMAIN = new RegExp(`(?<![\\p{L}\\p{N}-]|${DOT})(?:${LABEL}${DOT})+(?:[xX][nN]--[\\p{L}\\p{N}-]{1,59}|\\p{L}{2,63})(?![\\p{L}\\p{N}-])`, "gu");
-const IPV4 = new RegExp(`(?<![\\p{L}\\p{N}]|${DOT})\\d{1,3}(?:${DOT}\\d{1,3}){3}(?![\\p{N}]|${DOT}\\d)`, "gu");
+const COLON = "[:\\uFF1A\\uFE55\\uFE13\\uA789\\u2236]";
+const SLASH = "/\\\\\\uFF0F\\uFF3C\\u2044\\u2215";
+const SCHEME_SEP = new RegExp(`(?:${COLON}[${SLASH}]{2}|(?<=[hH][tT][tT][pP][sS]?)${COLON}[${SLASH}])([^\\s${SLASH}?#]*)`, "gu");
+const LABEL_CHAR = "[\\p{L}\\p{N}\\p{M}]";
+const TLD = `(?:[xX][nN]--[\\p{L}\\p{N}\\p{M}-]{1,59}|\\p{L}[\\p{L}\\p{M}]{1,62})(?![\\p{L}\\p{N}\\p{M}-])`;
+const DOMAIN_DOT = new RegExp(`(?<=${LABEL_CHAR})${DOT}(?=${TLD})`, "gu");
+const DIGIT = "[0-9\\uFF10-\\uFF19]";
+const IPV4 = new RegExp(`(?<![\\p{L}\\p{N}])${DIGIT}{1,3}(?:${DOT}${DIGIT}{1,3}){3}(?!\\p{N}|${DOT}${DIGIT})`, "gu");
+const DIGIT_PUNCTUATION = /[⒈-⒛\u{1F100}-\u{1F10A}]/gu;
+// Code points that render as nothing (combining grapheme joiner, variation selectors, Hangul fillers, ...). Left in, they
+// split a domain so it is not recognised but still resolves, or hide text. The format characters among them are
+// already spaces by the time this runs.
+const IGNORABLE = /\p{Default_Ignorable_Code_Point}/gu;
 
 function defang(text: string): string {
   return text
+    .replace(DIGIT_PUNCTUATION, (c) => c.normalize("NFKC"))
     .replace(SCHEME_SEP, (_, host: string) => `[:]//${host.replace(DOTS, "[.]")}`)
-    .replace(BARE_DOMAIN, (domain) => domain.replace(DOTS, "[.]"))
+    .replace(DOMAIN_DOT, "[.]")
     .replace(IPV4, (ip) => ip.replace(DOTS, "[.]"));
 }
 
@@ -58,7 +78,7 @@ export function cleanText(value: unknown, options: CleanOptions = {}): string {
   if (value === undefined || value === null) return "";
   const raw = typeof value === "string" ? value : typeof value === "number" || typeof value === "boolean" ? String(value) : "";
   const max = options.max ?? MAX_TEXT_LENGTH;
-  const flat = defang(preCap(raw, Math.max(PRE_CAP, max * 4)).replace(CONTROL, " ").replace(/ {2,}/g, " ").trim());
+  const flat = defang(preCap(raw, Math.max(PRE_CAP, max * 4)).replace(CONTROL, " ").replace(IGNORABLE, "").replace(/ {2,}/g, " ").trim());
   const chars = Array.from(flat);
   const capped = chars.length > max ? `${chars.slice(0, max - 3).join("").trimEnd()}...` : flat;
   return options.markdown ? escapeMarkdown(capped) : capped;
@@ -100,7 +120,8 @@ export function identifier(value: unknown): string | undefined {
 export function codeSpan(value: string): string {
   const text = value.replace(CONTROL, "\uFFFD");
   if (text === "") return "``";
-  const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
+  let longest = 0;
+  for (const run of text.matchAll(/`+/g)) longest = Math.max(longest, run[0].length);
   const fence = "`".repeat(longest + 1);
   const pad = text.startsWith("`") || text.endsWith("`") || (text.startsWith(" ") && text.endsWith(" ")) ? " " : "";
   return `${fence}${pad}${text}${pad}${fence}`;

@@ -80,13 +80,17 @@ Both are passed through exactly as the API gave them, and only when they are htt
 Product names, model numbers, Brand and Spec text come from retailers, so the server treats them as data, never as instructions.
 
 - Each value is flattened to one line, length-capped and markdown-escaped.
+- Invisible code points that could hide text or split a domain (variation selectors, Hangul fillers and other default-ignorable characters) are removed.
 - Web addresses inside it are defanged (`https://evil.example` becomes `https[:]//evil[.]example`), so they are never offered as links.
+  Lookalike dots, colons and slashes, punycode top-level domains and bare IPv4 addresses are covered too.
 - In the markdown, it sits between `BEGIN UNTRUSTED PRODUCT DATA <nonce>` and `END UNTRUSTED PRODUCT DATA <nonce>` lines.
   The nonce is random for every response, so retailer text cannot forge the end of the block.
 - Daily lows whose date, amount or currency is malformed are dropped, and the answer says how many.
 - Reason codes from the API (errors, withheld prices) are shown only when they are well-formed codes such as `NO_DATA`; anything else becomes `UNKNOWN` or a fixed message.
 - Identifiers (`model_slug`, model numbers, Brand and ComponentType slugs, and the identifiers you asked for) are never shortened or rewritten, because they are passed back to the API.
   They are shown in code spans, and a Product whose `model_slug` is not a single line of at most 256 UTF-8 bytes is left out.
+  A batch answer that does not have one result per identifier asked is reported as `INVALID_RESPONSE` for each of them.
+- Numbers the API sends that are not finite (or a stock count that is not a whole number) are left out, so an answer always matches its output schema.
 - Links are accepted on any subdomain of drophawk.net, not only on `drophawk.net` and `go.drophawk.net`, so the trust in a link rests on DropHawk controlling every subdomain of drophawk.net.
 
 ### What DropHawk does not know

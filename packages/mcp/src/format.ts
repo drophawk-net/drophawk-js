@@ -37,7 +37,7 @@ export function toProductOutput(p: Product): ProductOutput | undefined {
     ...(pricing.best_price ? { best_price: money(pricing.best_price) } : {}),
     ...(pricing.best_price_observed_at ? { best_price_observed_at: cleanText(pricing.best_price_observed_at) } : {}),
     ...(pricing.best_price_withheld_reason ? { best_price_withheld_reason: reasonCode(pricing.best_price_withheld_reason) ?? UNKNOWN } : {}),
-    in_stock_count: pricing.in_stock_count,
+    ...(Number.isSafeInteger(pricing.in_stock_count) && pricing.in_stock_count >= 0 ? { in_stock_count: pricing.in_stock_count } : {}),
     ...(pricing.all_time_low ? { all_time_low: { ...money(pricing.all_time_low.price), date: cleanText(pricing.all_time_low.date) } } : {}),
     ...(pricing.all_time_low_withheld_reason ? { all_time_low_withheld_reason: reasonCode(pricing.all_time_low_withheld_reason) ?? UNKNOWN } : {}),
     specs,
@@ -60,19 +60,27 @@ function buyUrl(p: Product, slug: string): { buy_url?: string } {
 const UNKNOWN = "UNKNOWN";
 
 /**
- * `asked` is the identifiers as the caller gave them; each entry echoes its one exactly (the API answers in the same order).
- * Should the API ever answer with a different count, the API's own identifier is echoed instead.
+ * `asked` is the identifiers as the caller gave them; each entry echoes its one exactly (the API answers one result per
+ * identifier, in the same order). An answer with a different count cannot be matched up, so every identifier is
+ * reported as INVALID_RESPONSE and nothing the API sent is used.
  */
 export function toBatchOutput(results: readonly ProductResult[], asked: readonly string[]): BatchOutput {
+  if (results.length !== asked.length) {
+    console.error(`drophawk-mcp: the API answered ${results.length} results for ${asked.length} identifiers; none is used`);
+    return { results: asked.map((id) => notFound(id, "INVALID_RESPONSE")) };
+  }
   return {
     results: results.map((r, i) => {
-      const id = results.length === asked.length ? asked[i]! : typeof r.identifier === "string" ? r.identifier : "";
+      const id = asked[i]!;
       const product = r.product ? toProductOutput(r.product) : undefined;
       if (product) return { identifier: id, found: true, merged: r.merged === true, product };
-      const reason = r.product ? "INVALID_RESPONSE" : (reasonCode(r.error?.reason) ?? UNKNOWN);
-      return { identifier: id, found: false, merged: false, error: { reason, message: describeItemError(reason) } };
+      return notFound(id, r.product ? "INVALID_RESPONSE" : (reasonCode(r.error?.reason) ?? UNKNOWN));
     }),
   };
+}
+
+function notFound(id: string, reason: string): BatchOutput["results"][number] {
+  return { identifier: id, found: false, merged: false, error: { reason, message: describeItemError(reason) } };
 }
 
 export function toDailyLowsOutput(identifier: string, lows: DailyLows): DailyLowsOutput {
@@ -125,7 +133,8 @@ function money(m: { amount: string; currency: string }): { amount: string; curre
 
 function specValue(spec: SpecValue): string | number | boolean | undefined {
   if (typeof spec.string_value === "string") return spec.string_value;
-  if (typeof spec.number_value === "number") return spec.number_value;
+  // JSON can carry numbers such as 1e999 that parse to Infinity; they are not values, and the output schema rejects them.
+  if (typeof spec.number_value === "number") return Number.isFinite(spec.number_value) ? spec.number_value : undefined;
   if (typeof spec.bool_value === "boolean") return spec.bool_value;
   return undefined;
 }
@@ -149,7 +158,8 @@ function untrustedBlock(lines: readonly string[]): string {
 function bestPriceLine(p: ProductOutput): string {
   if (p.best_price) {
     const observed = p.best_price_observed_at ? `, last observed ${md(p.best_price_observed_at)}` : "";
-    return `Best price: ${fmt(p.best_price)} (in stock at ${p.in_stock_count} ${p.in_stock_count === 1 ? "retailer" : "retailers"}${observed})`;
+    const where = p.in_stock_count === undefined ? "in stock" : `in stock at ${p.in_stock_count} ${p.in_stock_count === 1 ? "retailer" : "retailers"}`;
+    return `Best price: ${fmt(p.best_price)} (${where}${observed})`;
   }
   switch (p.best_price_withheld_reason) {
     case "OUT_OF_STOCK":
@@ -274,12 +284,18 @@ export function dailyLowsMarkdown(out: DailyLowsOutput): string {
 export function componentTypesMarkdown(types: readonly ComponentType[]): string {
   const lines = types.map((t) => {
     const specs = t.spec_schema.map((s) => `${md(s.key)} (${md(s.label)}, ${md(s.type)}${s.unit ? `, ${md(s.unit)}` : ""})`).join("; ");
-    return `- **${md(t.name)}** (${codeSpan(identifier(t.slug) ?? cleanText(t.slug))}), ${md(t.product_count)} Products${specs ? `. Specs: ${specs}` : ""}`;
+    return `- **${md(t.name)}** (${slugText(t.slug)}), ${md(t.product_count)} Products${specs ? `. Specs: ${specs}` : ""}`;
   });
   return ["# DropHawk ComponentTypes", "", "Each class of product DropHawk lists, with the Specs its Products carry.", "", untrustedBlock(lines)].join("\n");
 }
 
 export function brandsMarkdown(brands: readonly Brand[]): string {
-  const lines = brands.map((b) => `- ${md(b.name)} (${codeSpan(identifier(b.slug) ?? cleanText(b.slug))}), ${md(b.product_count)} Products`);
+  const lines = brands.map((b) => `- ${md(b.name)} (${slugText(b.slug)}), ${md(b.product_count)} Products`);
   return ["# DropHawk Brands", "", "Every maker with at least one Product. Search by name with search_products.", "", untrustedBlock(lines)].join("\n");
+}
+
+/** A slug as a code span, exactly as the API sent it, or a notice when it is not a valid identifier: never a rewritten slug. */
+function slugText(slug: unknown): string {
+  const id = identifier(slug);
+  return id === undefined ? "slug unavailable" : codeSpan(id);
 }

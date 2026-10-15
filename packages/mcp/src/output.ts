@@ -28,7 +28,7 @@ export const productSchema = z.object({
   best_price: moneySchema.optional().describe("Lowest in-stock price last observed. Absent when withheld; see best_price_withheld_reason."),
   best_price_observed_at: z.string().optional().describe("RFC 3339 time best_price was last observed."),
   best_price_withheld_reason: z.string().optional().describe("OUT_OF_STOCK, NO_DATA or MIXED_CURRENCY. More may be added."),
-  in_stock_count: z.number().int().describe("How many retailers last showed the Product in stock."),
+  in_stock_count: z.number().int().min(0).optional().describe("How many retailers last showed the Product in stock. Absent only if the API sent an invalid count."),
   all_time_low: moneySchema.extend({ date: z.string() }).optional().describe("The lowest daily price ever recorded, in stock or not, and the first day it was recorded at that price."),
   all_time_low_withheld_reason: z.string().optional().describe("NO_DATA or MIXED_CURRENCY. More may be added."),
   specs: z.record(z.string(), specValueSchema).describe("Specs keyed by the ComponentType's Spec keys. A missing key means the value is unknown."),
