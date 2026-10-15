@@ -160,6 +160,39 @@ expect_fail "a directory at a generated path in the head tree is refused" commit
 file_parent() { rm -rf "$1/packages/mcp/src/generated"; echo x > "$1/packages/mcp/src/generated"; }
 read -r g h <<<"$(new_repo file_parent)"
 expect_msg "a file where a generated directory belongs is refused" "is not a directory" commit "$g" "$h" "$(payload "new sdk" "new mcp")"
+# A crafted tree (git mktree would refuse it) with two entries named api.ts in the generated directory.
+dup_repo() {
+  local g="$1" h="$2" gen sdk_src sdk_dir pkgs root raw commit
+  gen="$(git -C "$g" rev-parse "$h:packages/sdk/src/generated")"
+  raw="$(mktemp -p "$work")"
+  python3 -I - "$(git -C "$g" rev-parse "$h:$sdk")" "$raw" <<'PY'
+import sys
+blob, out = bytes.fromhex(sys.argv[1]), sys.argv[2]
+open(out, "wb").write((b"100644 api.ts\0" + blob) * 2)
+PY
+  gen="$(git -C "$g" hash-object -t tree -w --literally "$raw")"
+  sdk_src="$(printf '040000 tree %s\tgenerated\n' "$gen" | git -C "$g" mktree)"
+  sdk_dir="$(printf '040000 tree %s\tsrc\n' "$sdk_src" | git -C "$g" mktree)"
+  pkgs="$(git -C "$g" ls-tree "$h:packages" | grep -v $'\tsdk$'; printf '040000 tree %s\tsdk\n' "$sdk_dir")"
+  pkgs="$(printf '%s\n' "$pkgs" | git -C "$g" mktree)"
+  root="$( (git -C "$g" ls-tree "$h" | grep -v $'\tpackages$'; printf '040000 tree %s\tpackages\n' "$pkgs") | git -C "$g" mktree)"
+  commit="$(git -C "$g" -c user.name=t -c user.email=t@t commit-tree "$root" -m dup)"
+  echo "$commit"
+}
+read -r g h <<<"$(new_repo noop)"
+d="$(dup_repo "$g" "$h")"
+check "the duplicate-entry fixture has two api.ts entries" [ "$(git -C "$g" ls-tree "$d:packages/sdk/src/generated" | grep -c $'\tapi.ts$')" = 2 ]
+expect_msg "a duplicate entry at a generated path is refused" "more than one entry" commit "$g" "$d" "$(payload "new sdk" "new mcp")"
+expect_msg "a duplicate entry is refused in --check mode too" "more than one entry" commit "$g" "$d" "$(payload "new sdk" "new mcp")" --check
+
+read -r g h <<<"$(new_repo noop)"
+new="$(commit "$g" "$h" "$(payload "new sdk" "new mcp")")"
+check "untouched entries keep their object ids" [ "$(git -C "$g" rev-parse "$new:spec")" = "$(git -C "$g" rev-parse "$h:spec")" ]
+exec_mode() { chmod +x "$1/$sdk"; git -C "$1" update-index --chmod=+x "$sdk" 2>/dev/null || true; }
+read -r g h <<<"$(new_repo exec_mode)"
+new="$(commit "$g" "$h" "$(payload "new sdk" "new mcp")")"
+check "an executable generated file keeps its mode" [ "$(git -C "$g" ls-tree --format='%(objectmode)' "$new" -- "$sdk")" = 100755 ]
+
 read -r g h <<<"$(new_repo noop)"
 expect_fail "a head that is not a full commit id is refused" commit "$g" "HEAD" "$(payload "new sdk" "new mcp")"
 expect_fail "a path in .git is refused" env GENERATED_PATHS=".git/config" "$here/commit-generated.sh" "$g" "$h" "$(payload a b)"

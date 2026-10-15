@@ -14,16 +14,17 @@ name: Spec regenerate push
 #   SHA-256 as a job output and re-uploads each one as a raw, unzipped artifact.
 # - push runs in the `spec-regenerate` environment, restricted to main, which holds the App key. It parses no
 #   archive and checks nothing out: it downloads the raw files, checks their SHA-256 against validate's outputs,
-#   builds the commit with git plumbing and pushes it only if the branch is still at the commit it was built on.
+#   fetches only the head commit (depth 1), builds the commit with git plumbing that reads only the trees along the
+#   two generated paths, and pushes it only if the branch is still at the commit it was built on.
 
 on:
   workflow_run:
     workflows: ["Spec regenerate"]
     types: [completed]
 
-concurrency:
-  group: spec-regenerate-push
-  cancel-in-progress: false
+# No concurrency group: one group keeps only one pending run, so an unrelated completion could replace the queued run
+# for the current head. Runs need no serialising: each acts only on its own head commit, and the push is an exact
+# compare-and-swap against that commit, so at most one run per head can land and a stale one is rejected.
 
 permissions: {}
 
