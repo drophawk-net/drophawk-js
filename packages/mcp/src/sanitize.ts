@@ -42,22 +42,30 @@ export function codeText(value: unknown): string {
   return cleanText(value).replace(/`/g, "'");
 }
 
+// Characters that never appear in a link DropHawk issues but can break out of markdown or quoted text around it:
+// brackets and parentheses (markdown links), angle brackets (autolinks, HTML), quotes and backticks (attributes, code spans),
+// and any whitespace or control, format, line or paragraph separator character.
+const URL_FORBIDDEN = /[()[\]<>"'`\s\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+
 /**
- * Returns the URL unchanged if it is an https URL on drophawk.net or one of its subdomains, without credentials; otherwise undefined.
- * "Unchanged" matters: buy_url carries a signature and must never be rewritten.
+ * Returns the URL unchanged if it is an https URL on drophawk.net or one of its subdomains, without credentials or a port,
+ * and already in its exact canonical form; otherwise undefined.
+ * "Unchanged" matters: buy_url carries a signature and must never be rewritten. Requiring the canonical form means the URL
+ * a client resolves is byte for byte the one checked here: nothing (case, dot segments, a default port, backslashes,
+ * non-ASCII) is normalised away between the check and the click.
  */
 export function safeUrl(value: unknown): string | undefined {
   if (typeof value !== "string" || value === "" || value.length > MAX_URL_LENGTH) return undefined;
-  if (/[\s\p{Cc}\p{Cf}]/u.test(value)) return undefined;
+  if (URL_FORBIDDEN.test(value)) return undefined;
   let url: URL;
   try {
     url = new URL(value);
   } catch {
     return undefined;
   }
-  if (url.protocol !== "https:" || url.username !== "" || url.password !== "") return undefined;
-  const host = url.hostname.toLowerCase();
+  if (url.href !== value) return undefined;
+  if (url.protocol !== "https:" || url.username !== "" || url.password !== "" || url.port !== "") return undefined;
+  const host = url.hostname;
   if (host !== "drophawk.net" && !host.endsWith(".drophawk.net")) return undefined;
-  if (url.port !== "") return undefined;
   return value;
 }

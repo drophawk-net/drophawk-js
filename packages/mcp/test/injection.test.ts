@@ -64,6 +64,31 @@ describe("safeUrl", () => {
   ])("rejects %j", (u) => {
     expect(safeUrl(u)).toBeUndefined();
   });
+  it.each(["(", ")", "[", "]", "<", ">", '"', "'", "`", " ", "\t", "\n", "\r", "\u0000", "\u007f", "\u0085", "\u200b", "\u2028"])(
+    "rejects a URL containing %j anywhere",
+    (ch) => {
+      expect(safeUrl(`https://drophawk.net/p/x${ch}y`)).toBeUndefined();
+      expect(safeUrl(`https://drophawk.net/p/x?q=${ch}`)).toBeUndefined();
+      expect(safeUrl(`https://drophawk.net/p/x#${ch}`)).toBeUndefined();
+    },
+  );
+  it.each([
+    "https://DROPHAWK.net/p/x",
+    "https://Go.drophawk.net/p/x",
+    "https://drophawk.net/a/./p",
+    "https://drophawk.net/a/../p",
+    "https://drophawk.net:443/p/x",
+    "https://drophawk.net",
+    "HTTPS://drophawk.net/p/x",
+    "https://drophawk.net/p/ä",
+    "https://drophawk.net/p/x?q=ä",
+    "https:drophawk.net/p/x",
+    "https:/drophawk.net/p/x",
+    "https://drophawk.net\\p\\x",
+    "https://drophawk.net./p/x",
+  ])("rejects %j, which is not in its exact canonical form", (u) => {
+    expect(safeUrl(u)).toBeUndefined();
+  });
   it("rejects non-strings and over-long values", () => {
     expect(safeUrl(undefined)).toBeUndefined();
     expect(safeUrl(5)).toBeUndefined();
