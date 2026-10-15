@@ -24,23 +24,31 @@ const MARKDOWN = /[\\`*[\]()<>|~#&]/g;
 //     (two or more letters, or xn-- punycode, not followed by another letter, digit, mark or hyphen) becomes "[.]",
 //     whatever precedes the domain                            www.evil.example -> www[.]evil[.]example, x-.evil.example -> x-.evil[.]example
 //   - every dot in a bare IPv4 address becomes "[.]"           1.2.3.4/x -> 1[.]2[.]3[.]4/x
-// Lookalikes count as the ASCII character and become its defanged form: fullwidth, ideographic and small dots; fullwidth,
-// small, presentation-form, modifier (U+A789) and ratio (U+2236) colons; fullwidth, fraction and division slashes and
-// backslashes; fullwidth digits in IPv4. "https:/host" and "https:\\host" count as separators too, but a single slash only
-// after http or https, so "3:/4" is left alone. The parenthesised and "digit full stop" characters U+2488-U+249B and
+// Lookalikes count as the ASCII character and become its defanged form: fullwidth, ideographic and small dots and a
+// percent-encoded dot (%2e); fullwidth, small, presentation-form, modifier (U+A789, U+02D0) and ratio (U+2236) colons;
+// fullwidth, fraction, division and big (U+29F8) slashes and backslashes; fullwidth digits in IPv4. "https:/host",
+// "https:\\host" and "https:host" count as separators too, but only after http or https, so "3:/4" is left alone.
+// A host ends at a colon, so a nested separator ("foo://https://evil...") is defanged as well. The parenthesised and "digit full stop" characters U+2488-U+249B and
 // U+1F100-U+1F10A are first rewritten to their compatibility form ("⒈" becomes "1."). Numbers such as "1.5", "2.5GbE"
 // or "v1.2.3.4" are left alone. Real links (url, buy_url, image_url) never pass through here: safeUrl checks them.
 //
-// Not done, because it would rewrite ordinary product text: NFKC normalisation of whole strings (it turns "™" into "TM"),
-// and treating text without a scheme separator or a top-level-domain-shaped label as a link.
+// Any other compatibility lookalike (circled, superscript, mathematical letters and digits) is caught by defangText,
+// which falls back to the NFKC form only for text whose normalised form holds a link. Not done, because it would
+// rewrite ordinary product text: NFKC normalisation of every string (it turns "™" into "TM"), and treating text without
+// a scheme separator or a top-level-domain-shaped label as a link.
 //
 // Every pattern is linear: SCHEME_SEP is anchored on a separator character, the dot patterns look at most one label
 // ahead of each dot, and IPv4 matches a bounded run. cleanText also caps the input before any of this runs.
-const DOT = "[.\\uFF0E\\u3002\\uFF61\\u2024\\uFE52]";
+const DOT = "(?:[.\\uFF0E\\u3002\\uFF61\\u2024\\uFE52]|%2[eE])";
 const DOTS = new RegExp(DOT, "gu");
-const COLON = "[:\\uFF1A\\uFE55\\uFE13\\uA789\\u2236]";
-const SLASH = "/\\\\\\uFF0F\\uFF3C\\u2044\\u2215";
-const SCHEME_SEP = new RegExp(`(?:${COLON}[${SLASH}]{2}|(?<=[hH][tT][tT][pP][sS]?)${COLON}[${SLASH}])([^\\s${SLASH}?#]*)`, "gu");
+const COLONS = ":\\uFF1A\\uFE55\\uFE13\\uA789\\u2236\\u02D0";
+const SLASH = "/\\\\\\uFF0F\\uFF3C\\u2044\\u2215\\u29F8";
+const AFTER_HTTP = "(?<=[hH][tT][tT][pP][sS]?)";
+// The host stops at a colon, so a separator nested in it ("foo://https://evil...") is matched and defanged in turn.
+const SCHEME_SEP = new RegExp(
+  `(?:[${COLONS}][${SLASH}]{2}|${AFTER_HTTP}[${COLONS}][${SLASH}]|${AFTER_HTTP}[${COLONS}](?=[\\p{L}\\p{N}\\[]))([^\\s${SLASH}${COLONS}?#]*)`,
+  "gu",
+);
 const LABEL_CHAR = "[\\p{L}\\p{N}\\p{M}]";
 const TLD = `(?:[xX][nN]--[\\p{L}\\p{N}\\p{M}-]{1,59}|\\p{L}[\\p{L}\\p{M}]{1,62})(?![\\p{L}\\p{N}\\p{M}-])`;
 const DOMAIN_DOT = new RegExp(`(?<=${LABEL_CHAR})${DOT}(?=${TLD})`, "gu");
@@ -61,6 +69,21 @@ function defang(text: string): string {
 }
 
 /**
+ * Defangs text as written, then checks its NFKC form for a link that pass missed: circled, superscript, mathematical or
+ * other compatibility characters that only read as letters, digits, dots, colons or slashes once normalised (ⓔⓥⓘⓛ.ⓒⓞⓜ,
+ * ¹.².³.⁴). Only then is the normalised form shown, defanged; otherwise the text keeps its own characters, so a name with
+ * ™ or ½, or one whose links the first pass already caught, is shown as written. NFKC can lengthen text, so the
+ * normalised form is capped like the input. Idempotent: the output holds no link in either form.
+ */
+function defangText(text: string): string {
+  const defanged = defang(text);
+  const normal = preCap(defanged.normalize("NFKC"), PRE_CAP * 4).replace(CONTROL, " ").replace(IGNORABLE, "");
+  if (normal === defanged) return defanged;
+  const defangedNormal = defang(normal);
+  return defangedNormal === normal ? defanged : defangedNormal;
+}
+
+/**
  * The longest raw input any pattern above sees, in UTF-16 code units: far more than any field shows (MAX_TEXT_LENGTH),
  * so the cap after defanging still decides what is kept, but small enough that a hostile megabyte costs nothing.
  */
@@ -78,7 +101,7 @@ export function cleanText(value: unknown, options: CleanOptions = {}): string {
   if (value === undefined || value === null) return "";
   const raw = typeof value === "string" ? value : typeof value === "number" || typeof value === "boolean" ? String(value) : "";
   const max = options.max ?? MAX_TEXT_LENGTH;
-  const flat = defang(preCap(raw, Math.max(PRE_CAP, max * 4)).replace(CONTROL, " ").replace(IGNORABLE, "").replace(/ {2,}/g, " ").trim());
+  const flat = defangText(preCap(raw, Math.max(PRE_CAP, max * 4)).replace(CONTROL, " ").replace(IGNORABLE, "").replace(/ {2,}/g, " ").trim());
   const chars = Array.from(flat);
   const capped = chars.length > max ? `${chars.slice(0, max - 3).join("").trimEnd()}...` : flat;
   return options.markdown ? escapeMarkdown(capped) : capped;

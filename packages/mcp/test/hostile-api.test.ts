@@ -294,3 +294,43 @@ describe("resource slugs", () => {
     expect(brands).not.toContain("aaaa");
   });
 });
+
+describe("defanging, round 4", () => {
+  it.each([
+    ["foo://https://evil.example/pay", "foo[:]//https[:]//evil[.]example/pay"],
+    ["foo://https://evil%2eexample/pay", "foo[:]//https[:]//evil[.]example/pay"],
+    ["a://b://c://evil.example", "a[:]//b[:]//c[:]//evil[.]example"],
+    ["evil%2Eexample/pay", "evil[.]example/pay"],
+    ["https:2130706433/pay", "https[:]//2130706433/pay"],
+    ["https://evil.example:8080/x", "https[:]//evil[.]example:8080/x"],
+    ["https\u02D0//evil.example", "https[:]//evil[.]example"],
+    ["https://evil.example\u29F8pay", "https[:]//evil[.]example\u29F8pay"],
+    ["https:\u29F8\u29F8evil.example", "https[:]//evil[.]example"],
+    ["\u24D4\u24E5\u24D8\u24DB.com", "evil[.]com"],
+    ["evil.\u24D2\u24DE\u24DC", "evil[.]com"],
+    ["\u00B9.\u00B2.\u00B3.\u2074/pay", "1[.]2[.]3[.]4/pay"],
+    ["\u{1D7CF}.\u{1D7D0}.\u{1D7D1}.\u{1D7D2}", "1[.]2[.]3[.]4"],
+    ["\u2460.\u2461.\u2462.\u2463", "1[.]2[.]3[.]4"],
+  ])("defangs %j", (input, out) => {
+    expect(cleanText(input)).toBe(out);
+  });
+
+  it.each(["Ryzen\u2122 7 7800X3D", "\u2460 fan included", "Size \u00BD inch, 2\u00B2"])("keeps ordinary text %j unnormalised", (input) => {
+    expect(cleanText(input)).toBe(input);
+  });
+
+  it.each(["foo://https://evil%2eexample/pay", "\u24D4\u24E5\u24D8\u24DB.com", "https:2130706433", "www.evil.example and \u2122", "https\uFF1A\uFF0F\uFF0Fevil\u3002com"])(
+    "is idempotent on %j",
+    (input) => {
+      const once = cleanText(input);
+      expect(cleanText(once)).toBe(once);
+    },
+  );
+
+  it("stays fast when the normalised form expands", () => {
+    const start = performance.now();
+    cleanText("\uFDFA".repeat(1_000_000));
+    cleanText("\u24D4.".repeat(500_000));
+    expect(performance.now() - start).toBeLessThan(500);
+  });
+});
