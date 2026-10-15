@@ -83,6 +83,7 @@ Product names, model numbers, Brand and Spec text come from retailers, so the se
 - Invisible code points that could hide text or split a domain (variation selectors, Hangul fillers and other default-ignorable characters) are removed.
 - Web addresses inside it are defanged (`https://evil.example` becomes `https[:]//evil[.]example`), so they are never offered as links.
   Lookalike dots, colons and slashes, punycode top-level domains and bare IPv4 addresses are covered too.
+  Percent-encoded and compatibility-character spellings are decoded for this check, repeatedly until nothing changes; text that never settles is shown as `(text withheld)`.
 - In the markdown, it sits between `BEGIN UNTRUSTED PRODUCT DATA <nonce>` and `END UNTRUSTED PRODUCT DATA <nonce>` lines.
   The nonce is random for every response, so retailer text cannot forge the end of the block.
 - Daily lows whose date, amount or currency is malformed are dropped, and the answer says how many.

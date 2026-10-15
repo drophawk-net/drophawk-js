@@ -86,20 +86,59 @@ function percentDecode(text: string): string {
   });
 }
 
+/** Shown instead of text that never settles: every round of decoding and defanging changes it again. */
+export const WITHHELD = "(text withheld)";
+
+/** How many times nested percent escapes (%252e, %25252e, ...) are decoded, and how many defanging rounds are run. */
+const MAX_ROUNDS = 8;
+
 /**
- * Defangs text as written, then checks its NFKC form, with percent escapes decoded (evil.%63om,
- * %EF%BD%85vil.com), for a link that pass missed: circled, superscript, mathematical or
+ * Decodes percent escapes until nothing changes, as often as nested encodings need. Undefined when they are nested
+ * deeper than MAX_ROUNDS, which no real text is.
+ */
+function percentDecodeFully(text: string): string | undefined {
+  let current = text;
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    const next = percentDecode(current);
+    if (next === current) return current;
+    current = next;
+  }
+  return undefined;
+}
+
+/**
+ * One round: defangs text as written, then checks its normalised form (percent escapes fully decoded, then NFKC) for a
+ * link that pass missed: escapes (evil.%63om, evil%252ecom, %EF%BD%85vil.com), or circled, superscript, mathematical or
  * other compatibility characters that only read as letters, digits, dots, colons or slashes once normalised (ⓔⓥⓘⓛ.ⓒⓞⓜ,
  * ¹.².³.⁴). Only then is the normalised form shown, defanged; otherwise the text keeps its own characters, so a name with
  * ™ or ½, or one whose links the first pass already caught, is shown as written. NFKC can lengthen text, so the
- * normalised form is capped like the input. Idempotent: the output holds no link in either form.
+ * normalised form is capped like the input. Undefined when the escapes are nested too deep to decode.
  */
-function defangText(text: string): string {
+function defangRound(text: string): string | undefined {
   const defanged = defang(text);
-  const normal = preCap(percentDecode(defanged).normalize("NFKC"), PRE_CAP * 4).replace(CONTROL, " ").replace(IGNORABLE, "");
+  const decoded = percentDecodeFully(defanged);
+  if (decoded === undefined) return undefined;
+  const normal = preCap(decoded.normalize("NFKC"), PRE_CAP * 4).replace(CONTROL, " ").replace(IGNORABLE, "");
   if (normal === defanged) return defanged;
   const defangedNormal = defang(normal);
   return defangedNormal === normal ? defanged : defangedNormal;
+}
+
+/**
+ * Runs defangRound on its own output until it no longer changes, so the result holds no link in any form a second
+ * pass could find, and cleaning it again changes nothing. A round can surface a link that was hidden in a part of the
+ * text the previous round kept as written, which is why one round is not enough. Text that has not settled after
+ * MAX_ROUNDS, or whose escapes are nested deeper than that, is withheld: fail closed rather than show it.
+ */
+function defangText(text: string): string {
+  let current = text;
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    const next = defangRound(current);
+    if (next === undefined) return WITHHELD;
+    if (next === current) return current;
+    current = next;
+  }
+  return WITHHELD;
 }
 
 /**

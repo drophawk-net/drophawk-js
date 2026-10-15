@@ -414,3 +414,41 @@ describe("identifier()", () => {
     expect(identifier(value)).toBe(value);
   });
 });
+
+describe("cleanText reaches a fixed point", () => {
+  it.each([
+    ["ⓔⓥⓘⓛ.ⓒⓞⓜ and evil.%2563om", "evil[.]com and evil[.]com"],
+    ["evil%252ecom/pay", "evil[.]com/pay"],
+    ["evil%25252ecom/pay", "evil[.]com/pay"],
+    ["https%253A%252F%252Fevil.com", "https[:]//evil[.]com"],
+  ])("defangs %j completely", (input, out) => {
+    expect(cleanText(input)).toBe(out);
+  });
+
+  it("withholds text whose escapes are nested too deep to settle", () => {
+    const out = cleanText("evil%" + "25".repeat(40) + "2ecom and more");
+    expect(out).toBe("(text withheld)");
+    expect(cleanText(out)).toBe(out);
+  });
+
+  // Every hostile string used anywhere in these tests, plus random mixes of the pieces they are made of.
+  const pieces = [
+    "evil", "com", "example", ".", "%2e", "%25", "%252e", "%63", "%EF%BD%85", "ⓔ", "ⓞ", "¹", "①", "．", "。",
+    ":", "//", "/", "\\", "：", "／", "ː", "⧸", "https", "http", "www", "xn--p1ai", "1", "2", "3", "4", "１",
+    "-", " ", "͏", "️", "́", "⒈", "\u{1F100}", "&#58;", "[.]", "[:]//", "x".repeat(60), "...",
+  ];
+  let seed = 42;
+  const random = () => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31);
+  const fuzz = Array.from({ length: 3000 }, () => Array.from({ length: 1 + Math.floor(random() * 40) }, () => pieces[Math.floor(random() * pieces.length)]).join(""));
+  const exposed = /(?:^|[^\p{L}\p{N}.-])(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:com|example)(?![\p{L}\p{N}])|\d{1,3}(?:\.\d{1,3}){3}|https?:\/\//iu;
+
+  it("is idempotent and exposes no plain link across 3000 random hostile strings", () => {
+    for (const input of fuzz) {
+      const once = cleanText(input);
+      expect(cleanText(once), JSON.stringify(input)).toBe(once);
+      expect(cleanText(once, { markdown: true }), JSON.stringify(input)).toBe(cleanText(input, { markdown: true }));
+      expect(Array.from(once).length).toBeLessThanOrEqual(200);
+      expect(once.normalize("NFKC"), JSON.stringify(input)).not.toMatch(exposed);
+    }
+  });
+});
