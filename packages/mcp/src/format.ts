@@ -57,11 +57,47 @@ export function toBatchOutput(results: readonly ProductResult[]): BatchOutput {
 }
 
 export function toDailyLowsOutput(identifier: string, lows: DailyLows): DailyLowsOutput {
+  const points: DailyLowsOutput["points"] = [];
+  let dropped = 0;
+  for (const p of (Array.isArray(lows.points) ? lows.points : []) as unknown[]) {
+    const point = dailyLow(p);
+    // The API withholds a mixed-currency series, so a point in another currency than the first is malformed too.
+    if (point && (points.length === 0 || point.price.currency === points[0]!.price.currency)) points.push(point);
+    else dropped++;
+  }
   return {
     identifier: cleanText(identifier),
-    points: lows.points.map((p) => ({ date: cleanText(p.date), price: money(p.price), is_carried_forward: p.is_carried_forward })),
+    points,
+    ...(dropped > 0 ? { dropped_points: dropped } : {}),
     ...(lows.withheld_reason ? { withheld_reason: cleanText(lows.withheld_reason) } : {}),
   };
+}
+
+/** Longest decimal amount accepted, in characters. Far beyond any real price, short enough that Number() stays exact enough to sort. */
+const MAX_AMOUNT_LENGTH = 20;
+
+/**
+ * One daily low, or undefined unless every field is well formed: date a real calendar day as YYYY-MM-DD,
+ * amount a non-negative plain decimal string (the SDK's Money.amount; no sign, exponent, grouping or spaces),
+ * currency a three-letter uppercase ISO 4217 code. These values are rendered without escaping, so anything else is dropped.
+ */
+function dailyLow(value: unknown): DailyLowsOutput["points"][number] | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const { date, price, is_carried_forward } = value as { date?: unknown; price?: { amount?: unknown; currency?: unknown } | null; is_carried_forward?: unknown };
+  if (!isCalendarDate(date) || typeof price !== "object" || price === null) return undefined;
+  const { amount, currency } = price;
+  if (typeof amount !== "string" || amount.length > MAX_AMOUNT_LENGTH || !/^\d+(?:\.\d+)?$/.test(amount) || !Number.isFinite(Number(amount))) return undefined;
+  if (typeof currency !== "string" || !/^[A-Z]{3}$/.test(currency)) return undefined;
+  return { date, price: { amount, currency }, is_carried_forward: is_carried_forward === true };
+}
+
+function isCalendarDate(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!m) return false;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const day = new Date(Date.UTC(y, mo - 1, d));
+  return day.getUTCFullYear() === y && day.getUTCMonth() === mo - 1 && day.getUTCDate() === d;
 }
 
 function money(m: { amount: string; currency: string }): { amount: string; currency: string } {
@@ -173,21 +209,27 @@ export function batchMarkdown(out: BatchOutput): string {
 
 export function dailyLowsMarkdown(out: DailyLowsOutput): string {
   const subject = `\`${codeText(out.identifier)}\``;
+  const dropped = out.dropped_points ?? 0;
   if (out.points.length === 0) {
     const why =
-      out.withheld_reason === "MIXED_CURRENCY"
-        ? "its prices span more than one currency, so they cannot be compared"
-        : out.withheld_reason === "NO_DATA" || !out.withheld_reason
-          ? "DropHawk has no price history for it"
-          : `the series is unknown (${md(out.withheld_reason)})`;
+      dropped > 0
+        ? `all ${dropped} ${dropped === 1 ? "point" : "points"} DropHawk sent ${dropped === 1 ? "was" : "were"} malformed and ${dropped === 1 ? "was" : "were"} dropped`
+        : out.withheld_reason === "MIXED_CURRENCY"
+          ? "its prices span more than one currency, so they cannot be compared"
+          : out.withheld_reason === "NO_DATA" || !out.withheld_reason
+            ? "DropHawk has no price history for it"
+            : `the series is unknown (${md(out.withheld_reason)})`;
     return `No daily lows for ${subject}: ${why}.`;
   }
+  // Every point passed dailyLow() in toDailyLowsOutput, so dates, amounts and the currency are plain ASCII tokens.
   const currency = out.points[0]!.price.currency;
   // The carried-forward point predates the 30-day window: it is the price in force when the window opened,
   // so it is shown on its own and never counted as the window's lowest, highest or latest.
   const carried = out.points.find((p) => p.is_carried_forward);
   const inWindow = out.points.filter((p) => !p.is_carried_forward);
-  const lines = [`Daily lows for ${subject} over the last 30 days: the lowest price observed each day across all retailers, in stock or not (${currency}).`];
+  const head = [`Daily lows for ${subject} over the last 30 days: the lowest price observed each day across all retailers, in stock or not (${currency}).`];
+  if (dropped > 0) head.push(`${dropped} malformed ${dropped === 1 ? "point was" : "points were"} dropped and ${dropped === 1 ? "is" : "are"} not shown.`);
+  const lines: string[] = [];
   if (inWindow.length > 0) {
     const sorted = [...inWindow].sort((a, b) => Number(a.price.amount) - Number(b.price.amount));
     const lowest = sorted[0]!;
@@ -201,7 +243,7 @@ export function dailyLowsMarkdown(out: DailyLowsOutput): string {
     lines.push(`Before the window: ${carried.price.amount}, the price in force when it opened (carried forward from ${carried.date}); not part of the lowest, highest or latest above.`);
   }
   lines.push("", ...inWindow.map((p) => `- ${p.date}: ${p.price.amount}`));
-  return lines.join("\n");
+  return [...head, "", untrustedBlock(lines)].join("\n");
 }
 
 export function componentTypesMarkdown(types: readonly ComponentType[]): string {

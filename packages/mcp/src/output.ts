@@ -69,6 +69,11 @@ export const dailyLowsOutputSchema = z.object({
       }),
     )
     .describe("Oldest first. Empty when withheld."),
+  dropped_points: z
+    .number()
+    .int()
+    .optional()
+    .describe("How many points the API sent malformed (bad date, amount or currency) and were left out. Absent when none were."),
   withheld_reason: z.string().optional().describe("Why points is empty: NO_DATA or MIXED_CURRENCY. More may be added."),
 });
 export type DailyLowsOutput = z.infer<typeof dailyLowsOutputSchema>;
