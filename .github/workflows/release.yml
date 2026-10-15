@@ -191,8 +191,23 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+
+          # Nothing this step runs may print a line the runner reads as a workflow command: tar, npm, git and openssl
+          # print text that a tarball or the registry controls. So all of the step's stdout and stderr go through quote(),
+          # which prefixes every line. The runner also ends a line at a lone CR, so CR, CRLF and the Unicode next-line,
+          # line and paragraph separators become LF first, and the legacy "##[command]" form, which works mid-line, is
+          # broken up. The step's own workflow commands go to fd 3, the unquoted output, and contain only fixed text and
+          # values validated below. The EXIT trap closes the quoted output and waits for quote() so no line is lost.
+          quote() {
+            tr '\r' '\n' | LC_ALL=C sed -e 's/\xC2\x85/\n/g' -e 's/\xE2\x80\xA8/\n/g' -e 's/\xE2\x80\xA9/\n/g' | LC_ALL=C sed -e 's/##\[/# #[/g' -e 's/^/  | /'
+          }
+          exec 3>&1
+          exec > >(quote) 2>&1
+          quoted=$!
+          trap 'exec >&- 2>&-; wait "$quoted"' EXIT
+
           auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
-          echo "::add-mask::$auth"
+          echo "::add-mask::$auth" >&3
           export GIT_CONFIG_COUNT=1
           export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
           export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
@@ -201,14 +216,6 @@ jobs:
           repo="$PWD"
           work="$(mktemp -d)"
           cd "$work"
-
-          # Text from a tarball or the registry is never put into a workflow command, and output from npm is
-          # prefixed so that none of its lines can start one; the legacy "##[command]" form, which also works mid-line,
-          # is broken up as well. The runner also ends a line at a lone CR, so CR, CRLF and the Unicode next-line,
-          # line and paragraph separators are turned into LF first, and every resulting line is prefixed.
-          quote() {
-            tr '\r' '\n' | LC_ALL=C sed -e 's/\xC2\x85/\n/g' -e 's/\xE2\x80\xA8/\n/g' -e 's/\xE2\x80\xA9/\n/g' | LC_ALL=C sed -e 's/##\[/# #[/g' -e 's/^/  | /'
-          }
 
           # Before publishing anything: every tarball must be the SDK or the MCP server, at most one of each, and its
           # package.json must name exactly that package with a plain version that matches the file name.
@@ -219,18 +226,18 @@ jobs:
               drophawk-sdk-[0-9]*.tgz) package=drophawk-sdk ;;
               drophawk-mcp-[0-9]*.tgz) package=drophawk-mcp ;;
               *)
-                echo "::error title=Unexpected tarball::release-tarballs holds a file that is neither the SDK nor the MCP server tarball; nothing was published."
+                echo "::error title=Unexpected tarball::release-tarballs holds a file that is neither the SDK nor the MCP server tarball; nothing was published." >&3
                 exit 1
                 ;;
             esac
             if [ -n "${paths[$package]:-}" ]; then
-              echo "::error title=Several tarballs::There is more than one $package tarball; nothing was published."
+              echo "::error title=Several tarballs::There is more than one $package tarball; nothing was published." >&3
               exit 1
             fi
             name="@drophawk/${package#drophawk-}"
             # Prints the version, and for the MCP server also the SDK version its dependency range was resolved from.
             # shellcheck disable=SC2016 # the single-quoted script is JavaScript for node, not shell
-            if ! manifest="$(tar -xzOf "$file" package/package.json | EXPECTED="$name" node -e '
+            if ! manifest="$(tar -xzOf "$file" package/package.json 2> /dev/null | EXPECTED="$name" node -e '
                 const p = JSON.parse(require("fs").readFileSync(0, "utf8"));
                 const semver = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/;
                 if (p.name !== process.env.EXPECTED || typeof p.version !== "string" || !semver.test(p.version)) process.exit(1);
@@ -243,12 +250,12 @@ jobs:
                 }
                 process.stdout.write(line);
               ' 2> /dev/null)"; then
-              echo "::error title=Bad $package tarball::Its package.json does not name $name with a plain version (and, for the MCP server, a plain @drophawk/sdk range); nothing was published."
+              echo "::error title=Bad $package tarball::Its package.json does not name $name with a plain version (and, for the MCP server, a plain @drophawk/sdk range); nothing was published." >&3
               exit 1
             fi
             read -r version dependency <<< "$manifest"
             if [ "$(basename "$file")" != "$package-$version.tgz" ]; then
-              echo "::error title=Bad $package tarball::Its file name does not match the version in its package.json; nothing was published."
+              echo "::error title=Bad $package tarball::Its file name does not match the version in its package.json; nothing was published." >&3
               exit 1
             fi
             if [ "$package" = drophawk-mcp ]; then sdk_dependency="$dependency"; fi
@@ -258,6 +265,7 @@ jobs:
 
           # Prints the integrity npm has for a version, or nothing when npm does not have it. Any other failure makes it fail,
           # which ends the job: it is only ever called in a plain assignment, under set -e. Diagnostics go to stderr.
+          # Its stdout is captured by the caller, so its error goes to fd 3 directly.
           registry_integrity() {
             local out
             if out="$(npm view -- "$1" dist.integrity 2> npm-view.err)"; then
@@ -265,8 +273,8 @@ jobs:
             elif grep -qE 'E404|404 Not Found' npm-view.err; then
               :
             else
-              quote < npm-view.err >&2
-              echo "::error title=npm lookup failed::Could not look up $1 on the npm registry." >&2
+              cat npm-view.err >&2
+              echo "::error title=npm lookup failed::Could not look up $1 on the npm registry." >&3
               return 1
             fi
           }
@@ -285,7 +293,7 @@ jobs:
               # Not released by this run: the SDK version the MCP server was built against must already be on npm.
               sdk_on_npm="$(registry_integrity "@drophawk/sdk@$sdk_dependency")"
               if [ -z "$sdk_on_npm" ]; then
-                echo "::error title=SDK not on npm::$id depends on @drophawk/sdk@$sdk_dependency, which is not on npm and was not released by this run; $id was not published."
+                echo "::error title=SDK not on npm::$id depends on @drophawk/sdk@$sdk_dependency, which is not on npm and was not released by this run; $id was not published." >&3
                 exit 1
               fi
             fi
@@ -293,13 +301,13 @@ jobs:
             published="$(registry_integrity "$id")"
             if [ -z "$published" ]; then
               echo "Publishing $id"
-              npm publish --access public -- "$tarball" 2>&1 | quote
+              npm publish --access public -- "$tarball"
             elif [ "$published" = "$integrity" ]; then
               echo "$id is already on npm with this exact tarball; not publishing it again"
             else
               echo "npm has, for $id:"
-              printf '%s\n' "$published" | quote
-              echo "::error title=$id already published::$id is on npm with different contents than this build ($integrity). It cannot be republished, and nothing after it is published; tag the commit it was published from by hand."
+              printf '%s\n' "$published"
+              echo "::error title=$id already published::$id is on npm with different contents than this build ($integrity). It cannot be republished, and nothing after it is published; tag the commit it was published from by hand." >&3
               exit 1
             fi
             if git -C "$repo" ls-remote --exit-code --tags origin "refs/tags/$id" > /dev/null; then
