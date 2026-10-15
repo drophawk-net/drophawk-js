@@ -21,7 +21,7 @@ const MARKDOWN = /[\\`*[\]()<>|~#&]/g;
 //                                                             https://evil.example/pay -> https[:]//evil[.]example/pay
 //   - every dot in the host after it becomes "[.]"
 //   - every other dot that follows a letter, digit or combining mark and precedes a top-level-domain-shaped label
-//     (two or more letters, or xn-- punycode, not followed by another letter, digit, mark or hyphen) becomes "[.]",
+//     (two or more letters, or xn-- punycode, not continued by a letter, digit, mark or hyphenated label) becomes "[.]",
 //     whatever precedes the domain                            www.evil.example -> www[.]evil[.]example, x-.evil.example -> x-.evil[.]example
 //   - every dot in a bare IPv4 address becomes "[.]"           1.2.3.4/x -> 1[.]2[.]3[.]4/x
 // Lookalikes count as the ASCII character and become its defanged form: fullwidth, ideographic and small dots and a
@@ -50,7 +50,7 @@ const SCHEME_SEP = new RegExp(
   "gu",
 );
 const LABEL_CHAR = "[\\p{L}\\p{N}\\p{M}]";
-const TLD = `(?:[xX][nN]--[\\p{L}\\p{N}\\p{M}-]{1,59}|\\p{L}[\\p{L}\\p{M}]{1,62})(?![\\p{L}\\p{N}\\p{M}-])`;
+const TLD = `(?:[xX][nN]--[\\p{L}\\p{N}\\p{M}-]{1,59}|\\p{L}[\\p{L}\\p{M}]{1,62})(?![\\p{L}\\p{N}\\p{M}]|-[\\p{L}\\p{N}\\p{M}-])`;
 const DOMAIN_DOT = new RegExp(`(?<=${LABEL_CHAR})${DOT}(?=${TLD})`, "gu");
 const DIGIT = "[0-9\\uFF10-\\uFF19]";
 const IPV4 = new RegExp(`(?<![\\p{L}\\p{N}])${DIGIT}{1,3}(?:${DOT}${DIGIT}{1,3}){3}(?!\\p{N}|${DOT}${DIGIT})`, "gu");
@@ -68,8 +68,16 @@ function defang(text: string): string {
     .replace(IPV4, (ip) => ip.replace(DOTS, "[.]"));
 }
 
+// Percent-encoded letters, digits and - . _ ~ (the characters a URL never needs to encode), as a browser would read them.
+const UNRESERVED_ESCAPE = /%(2[dDeE]|3\d|[46][1-9a-fA-F]|[57][0-9aA]|5[fF]|7[eE])/g;
+
+function decodeUnreserved(text: string): string {
+  return text.replace(UNRESERVED_ESCAPE, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)));
+}
+
 /**
- * Defangs text as written, then checks its NFKC form for a link that pass missed: circled, superscript, mathematical or
+ * Defangs text as written, then checks its NFKC form, with percent-encoded unreserved characters decoded
+ * (evil.%63om), for a link that pass missed: circled, superscript, mathematical or
  * other compatibility characters that only read as letters, digits, dots, colons or slashes once normalised (ⓔⓥⓘⓛ.ⓒⓞⓜ,
  * ¹.².³.⁴). Only then is the normalised form shown, defanged; otherwise the text keeps its own characters, so a name with
  * ™ or ½, or one whose links the first pass already caught, is shown as written. NFKC can lengthen text, so the
@@ -77,7 +85,7 @@ function defang(text: string): string {
  */
 function defangText(text: string): string {
   const defanged = defang(text);
-  const normal = preCap(defanged.normalize("NFKC"), PRE_CAP * 4).replace(CONTROL, " ").replace(IGNORABLE, "");
+  const normal = preCap(decodeUnreserved(defanged).normalize("NFKC"), PRE_CAP * 4).replace(CONTROL, " ").replace(IGNORABLE, "");
   if (normal === defanged) return defanged;
   const defangedNormal = defang(normal);
   return defangedNormal === normal ? defanged : defangedNormal;
@@ -102,9 +110,41 @@ export function cleanText(value: unknown, options: CleanOptions = {}): string {
   const raw = typeof value === "string" ? value : typeof value === "number" || typeof value === "boolean" ? String(value) : "";
   const max = options.max ?? MAX_TEXT_LENGTH;
   const flat = defangText(preCap(raw, Math.max(PRE_CAP, max * 4)).replace(CONTROL, " ").replace(IGNORABLE, "").replace(/ {2,}/g, " ").trim());
-  const chars = Array.from(flat);
-  const capped = chars.length > max ? `${chars.slice(0, max - 3).join("").trimEnd()}...` : flat;
+  const capped = capLength(flat, max);
   return options.markdown ? escapeMarkdown(capped) : capped;
+}
+
+/** A defanging token, which the cap must never cut in half. */
+const DEFANG_TOKEN = /\[\.\]|\[:\]\/\//g;
+
+/**
+ * Caps defanged text at `max` characters, "..." included. Cutting text can expose an address its tail was hiding
+ * ("evil.com0" cut after "com", "1.2.3.4567" cut after "4"), so the kept part is defanged again, and cut again if that
+ * made it too long, until it is stable. A cut never splits a defanging token. Each round only shortens the kept part
+ * or leaves it as it is, so this ends; the bound is a backstop that drops the text rather than show it undefanged.
+ */
+function capLength(text: string, max: number): string {
+  if (Array.from(text).length <= max) return text;
+  let body = text;
+  for (let round = 0; round < 16; round++) {
+    body = clip(body, Math.max(0, max - 3));
+    const again = defangText(body);
+    if (again === body) return `${body}...`;
+    body = again;
+  }
+  return "...";
+}
+
+/** The first `n` characters of `text`, moved back to the start of any defanging token the cut would split, without trailing spaces. */
+function clip(text: string, n: number): string {
+  const chars = Array.from(text);
+  if (chars.length <= n) return text.trimEnd();
+  let end = chars.slice(0, n).join("").length;
+  for (const token of text.matchAll(DEFANG_TOKEN)) {
+    if (token.index >= end) break;
+    if (token.index + token[0].length > end) end = token.index;
+  }
+  return text.slice(0, end).trimEnd();
 }
 
 // An underscore between letters or digits cannot start emphasis in CommonMark, so identifiers such as ray_tracing stay readable.

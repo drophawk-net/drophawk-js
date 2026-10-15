@@ -334,3 +334,44 @@ describe("defanging, round 4", () => {
     expect(performance.now() - start).toBeLessThan(500);
   });
 });
+
+describe("truncation never exposes an address", () => {
+  const pad = "x".repeat(188);
+  const exposed = /(?<![\p{L}\p{N}])(?:[\p{L}\p{N}-]+\.)+\p{L}{2,}(?![\p{L}\p{N}])|\d{1,3}(?:\.\d{1,3}){3}/u;
+  it.each([
+    pad + " evil.com0 ignored suffix",
+    pad + " evil.co-zzz and more",
+    pad + "  1.2.3.4567 and more text",
+    pad + " evil." + "c".repeat(70),
+    "y".repeat(150) + " a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.q.r.s.t.u.v.w.x.y.z.aa.bb.cc.dd.ee.ff.gg.hh.ii.jj.kk.ll.mm.nn.oo.pp.qq0",
+  ])("clips %j safely", (input) => {
+    const out = cleanText(input);
+    expect(Array.from(out).length).toBeLessThanOrEqual(200);
+    expect(out.endsWith("...")).toBe(true);
+    expect(out.slice(0, -3)).not.toMatch(exposed);
+    expect(out).not.toMatch(/\[\.?$|\[:\]?\/?$/);
+    expect(cleanText(out)).toBe(out);
+    expect(cleanText(out, { markdown: true })).toBe(cleanText(input, { markdown: true }));
+  });
+
+  it("never splits a defanged token at the cut", () => {
+    for (let n = 180; n < 200; n++) {
+      const out = cleanText("z".repeat(n) + " www.evil.example/pay https://evil.example/x " + "q".repeat(50));
+      expect(Array.from(out).length).toBeLessThanOrEqual(200);
+      expect(out).not.toMatch(/\[\.?\.\.\.$|\[:\]\/?\.\.\.$|\[:?\.\.\.$/);
+      expect(cleanText(out)).toBe(out);
+    }
+  });
+});
+
+describe("percent-encoded hosts", () => {
+  it.each([
+    ["https:%65vil.%63om", "https[:]//evil[.]com"],
+    ["https:///evil.%63om", "https[:]///evil[.]com"],
+    ["see evil.%63%6Fm/pay", "see evil[.]com/pay"],
+    ["100% cotton, 50%OFF", "100% cotton, 50%OFF"],
+  ])("defangs %j", (input, out) => {
+    expect(cleanText(input)).toBe(out);
+    expect(cleanText(cleanText(input))).toBe(cleanText(input));
+  });
+});
