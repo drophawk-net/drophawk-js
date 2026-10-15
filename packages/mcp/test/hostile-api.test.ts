@@ -546,6 +546,15 @@ describe("strict booleans and prices", () => {
     expect(textOf(r)).not.toContain("ignore prior");
   });
 
+  it("accepts a lowercase t and z in an RFC 3339 observed_at", async () => {
+    const p = product("p", {
+      pricing: { best_price: { price: { amount: "1999.00", currency: "AUD" }, observed_at: "2026-10-09t01:02:03z" }, in_stock_count: 2 } as never,
+    });
+    const c = await setup(() => json({ products: [p], next_page_token: "" }));
+    const sc = ((await c.client.callTool({ name: "search_products", arguments: { query: "x" } })).structuredContent as { products: Record<string, unknown>[] }).products[0]!;
+    expect(sc.best_price).toEqual({ price: { amount: "1999.00", currency: "AUD" }, observed_at: "2026-10-09t01:02:03z" });
+  });
+
   it("keeps well-formed prices and timestamps", async () => {
     const c = await setup(() => json({ products: [product("p")], next_page_token: "" }));
     const sc = ((await c.client.callTool({ name: "search_products", arguments: { query: "x" } })).structuredContent as { products: Record<string, unknown>[] }).products[0]!;

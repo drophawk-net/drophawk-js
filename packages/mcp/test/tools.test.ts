@@ -299,6 +299,13 @@ describe("get_daily_lows", () => {
     expect(text).toContain("Lowest 9.5 on 2026-09-13, highest 9007199254740993.02 on 2026-09-10");
   });
 
+  it("orders amounts that differ only past double precision", async () => {
+    const mk = (date: string, amount: string) => ({ date, price: { amount, currency: "AUD" }, is_carried_forward: false });
+    const { client } = await setup(() => json({ points: [mk("2026-09-10", "1.00000000000000000002"), mk("2026-09-11", "1.00000000000000000001")] }));
+    const text = textOf(await client.callTool({ name: "get_daily_lows", arguments: { identifier: "q" } }));
+    expect(text).toContain("Lowest 1.00000000000000000001 on 2026-09-11, highest 1.00000000000000000002 on 2026-09-10");
+  });
+
   it("handles a series with only a carried-forward point", async () => {
     const { client } = await setup(() => json({ points: [points[0]] }));
     const text = textOf(await client.callTool({ name: "get_daily_lows", arguments: { identifier: "q" } }));
