@@ -53,7 +53,7 @@ The Release workflow has three jobs with separate privileges:
 - `version` opens the "chore: version packages" pull request.
   It runs in the `release` environment (restricted to `main`) and pushes with a GitHub App token, so CI runs on the pull request.
   Configure the App once: install it on this repository with contents and pull-requests write access, then set the variable `DROPHAWK_JS_RELEASE_CLIENT_ID` and the secret `DROPHAWK_JS_RELEASE_PRIVATE_KEY` on the `release` environment.
-  Until that is done the job falls back to `GITHUB_TOKEN`, prints a warning, and CI does not run on the version pull request by itself (close and reopen it to trigger CI).
+  The job's own `GITHUB_TOKEN` is read only and there is no fallback to it: until the App is configured, the job fails with an error naming what is missing, and no version pull request is opened.
 - `build` installs with `--ignore-scripts`, tests, builds and packs tarballs, and uploads them.
   It has read-only repository access and cannot publish.
 - `publish` runs in the `npm` environment, downloads those tarballs and runs `npm publish` on each through trusted publishing.

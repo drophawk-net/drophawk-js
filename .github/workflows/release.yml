@@ -3,7 +3,8 @@ name: Release
 # Versions and publishes the packages under packages/ in three jobs with separate privileges.
 #
 # - "version" opens or updates the "chore: version packages" PR while changesets are pending.
-#   It holds no npm credentials. It pushes with a GitHub App token so that CI runs on that PR.
+#   It holds no npm credentials, and its GITHUB_TOKEN can only read. It writes with a GitHub App token, which it requires,
+#   so that CI runs on that PR.
 # - "build" runs when no changesets are pending, i.e. after that PR is merged. It installs without
 #   lifecycle scripts, tests, builds and packs tarballs for versions that are not on npm yet, and uploads them.
 #   It has read-only repository access and no id-token, so nothing it runs can publish.
@@ -37,11 +38,10 @@ jobs:
     # The `release` environment (restricted to main) holds the GitHub App credentials:
     #   variable DROPHAWK_JS_RELEASE_CLIENT_ID, secret DROPHAWK_JS_RELEASE_PRIVATE_KEY.
     environment: release
-    # contents and pull-requests write are only used by the fallback below, when the App is not configured.
-    # Once the App is in place they can be reduced to `contents: read`.
+    # GITHUB_TOKEN only reads. Every write (the version branch, its commit and the pull request) is made with the
+    # release App's token below, and the job fails if the App is not configured.
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
     outputs:
       has-changesets: ${{ steps.changesets.outputs.has-changesets }}
     steps:
@@ -60,10 +60,22 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
 
-      # A pull request opened with the default GITHUB_TOKEN does not trigger workflows, so CI would never run on it.
-      # The App token does. The token is scoped to this repository and expires with the job.
+      - name: Require the release App
+        env:
+          CLIENT_ID: ${{ vars.DROPHAWK_JS_RELEASE_CLIENT_ID }}
+          PRIVATE_KEY: ${{ secrets.DROPHAWK_JS_RELEASE_PRIVATE_KEY }}
+        run: |
+          missing=()
+          [ -n "$CLIENT_ID" ] || missing+=("variable DROPHAWK_JS_RELEASE_CLIENT_ID")
+          [ -n "$PRIVATE_KEY" ] || missing+=("secret DROPHAWK_JS_RELEASE_PRIVATE_KEY")
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error title=Release App not configured::The 'release' environment is missing: ${missing[*]}. The version job writes only with the release GitHub App's token and has no GITHUB_TOKEN fallback. Configure the App as described in the README."
+            exit 1
+          fi
+
+      # The App token pushes the version commit and opens the PR. A pull request opened with GITHUB_TOKEN would not trigger CI;
+      # this one does. The token is scoped to this repository and expires with the job.
       - id: app-token
-        if: vars.DROPHAWK_JS_RELEASE_CLIENT_ID != ''
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.DROPHAWK_JS_RELEASE_CLIENT_ID }}
@@ -71,20 +83,16 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
 
-      - name: Note when the release App is not configured
-        if: steps.app-token.outcome == 'skipped'
-        run: |
-          echo "::warning title=Release App not configured::The variable DROPHAWK_JS_RELEASE_CLIENT_ID is not set on the 'release' environment, so the version PR is opened with GITHUB_TOKEN and CI will not run on it automatically. Close and reopen the PR to trigger CI, or configure the App (see the README)."
-
+      # changesets/action pushes through the GitHub API with `github-token`, and hands the same token to the version script
+      # as GITHUB_TOKEN, where changelog-github uses it to look up PR and author links. It refuses to run if a GITHUB_TOKEN
+      # environment variable that differs from the input is set, so none is set here.
       - id: changesets
         uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
         with:
+          github-token: ${{ steps.app-token.outputs.token }}
           version-script: bun run version-packages
           commit-message: "chore: version packages"
           pr-title: "chore: version packages"
-        env:
-          # Used to push the version branch and open the PR, and by changelog-github to look up PR and author links.
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
 
   build:
     needs: version
@@ -170,6 +178,7 @@ jobs:
           set -euo pipefail
           : > release-tags.txt
           for tarball in release-tarballs/*.tgz; do
+            # shellcheck disable=SC2016 # the backticks are a JavaScript template literal for node, not shell
             id="$(tar -xzOf "$tarball" package/package.json | node -p 'const p = JSON.parse(require("fs").readFileSync(0, "utf8")); `${p.name}@${p.version}`')"
             echo "Publishing $id from $tarball"
             npm publish "$tarball" --access public
