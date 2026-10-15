@@ -90,7 +90,7 @@ describe("search_products", () => {
     expect(text).toContain("Product rtx-4090");
     expect(text).toContain("Best price: 1999.00 AUD");
     expect(text).toContain("All-time low: 1799.00 AUD, the lowest daily price ever recorded (first on 2025-11-28)");
-    expect(text).toContain("model number RTX-4090");
+    expect(text).toContain("model number `RTX-4090`");
     expect(text).toContain(`url: ${p.url}`);
     expect(text).toContain(`buy_url: ${p.buy_url}`);
 
@@ -189,7 +189,7 @@ describe("get_products", () => {
     expect(text).toContain("`old-name` (merged into the Product below");
     expect(text).toContain("not a valid identifier");
     expect(text).toContain("\n   - **Product survivor**");
-    expect(text).toContain("model number SURVIVOR");
+    expect(text).toContain("model number `SURVIVOR`");
     expect(text).toContain("Specs: vram 24 GB, ray_tracing yes, chipset RTX 4090");
     expect(text).toContain(`buy_url: ${survivor.buy_url}`);
   });

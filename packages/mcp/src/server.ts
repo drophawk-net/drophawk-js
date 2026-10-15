@@ -13,7 +13,7 @@ import {
   toProductOutput,
 } from "./format.js";
 import { utf8Text } from "./input.js";
-import { batchOutputSchema, dailyLowsOutputSchema, searchOutputSchema } from "./output.js";
+import { batchOutputSchema, dailyLowsOutputSchema, searchOutputSchema, type ProductOutput } from "./output.js";
 import { DAILY_LOWS_DESCRIPTION, GET_PRODUCTS_DESCRIPTION, INSTRUCTIONS, SEARCH_DESCRIPTION } from "./copy.js";
 import { VERSION } from "./version.js";
 
@@ -70,7 +70,10 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       try {
         const page = await catalogue.searchProducts({ query, page_size: limit }, { signal: ctx.mcpReq.signal });
         // Hold the caller's limit even if the API returns more.
-        const products = page.products.slice(0, limit).map(toProductOutput);
+        const products = page.products
+          .slice(0, limit)
+          .map(toProductOutput)
+          .filter((p): p is ProductOutput => p !== undefined);
         const hasMore = page.next_page_token !== "" || page.products.length > limit;
         return {
           content: [{ type: "text" as const, text: searchMarkdown(query, products, hasMore) }],
@@ -99,7 +102,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
     },
     async ({ identifiers }, ctx) => {
       try {
-        const out = toBatchOutput(await catalogue.getProducts(identifiers, { signal: ctx.mcpReq.signal }));
+        const out = toBatchOutput(await catalogue.getProducts(identifiers, { signal: ctx.mcpReq.signal }), identifiers);
         return { content: [{ type: "text" as const, text: batchMarkdown(out) }], structuredContent: out };
       } catch (err) {
         return toolError(err);

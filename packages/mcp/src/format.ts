@@ -1,11 +1,19 @@
 import { randomBytes } from "node:crypto";
 import type { Brand, ComponentType, DailyLows, Product, ProductResult, SpecValue } from "@drophawk/sdk";
 import { describeItemError } from "./errors.js";
-import { cleanText, codeText, safeUrl } from "./sanitize.js";
+import { cleanText, codeSpan, identifier, reasonCode, safeUrl } from "./sanitize.js";
 import type { BatchOutput, DailyLowsOutput, ProductOutput } from "./output.js";
 
-/** Converts an SDK Product to the shape of `structuredContent`. Links are copied verbatim. */
-export function toProductOutput(p: Product): ProductOutput {
+/**
+ * Converts an SDK Product to the shape of `structuredContent`. Links and identifiers are copied verbatim.
+ * Returns undefined when the model_slug is not a valid identifier: without it the Product cannot be looked up again.
+ */
+export function toProductOutput(p: Product): ProductOutput | undefined {
+  const slug = identifier(p.model_slug);
+  if (slug === undefined) {
+    console.error("drophawk-mcp: the API sent a Product with an invalid model_slug; it is left out");
+    return undefined;
+  }
   const pricing = p.pricing;
   // No prototype: spec keys come from the API, so "__proto__" or "constructor" must be plain keys.
   const specs: ProductOutput["specs"] = Object.create(null) as ProductOutput["specs"];
@@ -17,21 +25,21 @@ export function toProductOutput(p: Product): ProductOutput {
     specs[cleanText(key)] = unit ? { value, unit } : { value };
   }
   const image = safeUrl(p.images?.[0]?.url);
-  const buy = buyUrl(p);
+  const buy = buyUrl(p, slug);
   return {
-    model_slug: cleanText(p.model_slug),
+    model_slug: slug,
     name: cleanText(p.name),
-    model_number: cleanText(p.model_number),
-    brand: { slug: cleanText(p.brand?.slug), name: cleanText(p.brand?.name) },
-    component_type: { slug: cleanText(p.component_type?.slug), name: cleanText(p.component_type?.name) },
+    model_number: identifier(p.model_number) ?? "",
+    brand: { slug: identifier(p.brand?.slug) ?? "", name: cleanText(p.brand?.name) },
+    component_type: { slug: identifier(p.component_type?.slug) ?? "", name: cleanText(p.component_type?.name) },
     url: safeUrl(p.url) ?? UNAVAILABLE,
     ...buy,
     ...(pricing.best_price ? { best_price: money(pricing.best_price) } : {}),
     ...(pricing.best_price_observed_at ? { best_price_observed_at: cleanText(pricing.best_price_observed_at) } : {}),
-    ...(pricing.best_price_withheld_reason ? { best_price_withheld_reason: cleanText(pricing.best_price_withheld_reason) } : {}),
+    ...(pricing.best_price_withheld_reason ? { best_price_withheld_reason: reasonCode(pricing.best_price_withheld_reason) ?? UNKNOWN } : {}),
     in_stock_count: pricing.in_stock_count,
     ...(pricing.all_time_low ? { all_time_low: { ...money(pricing.all_time_low.price), date: cleanText(pricing.all_time_low.date) } } : {}),
-    ...(pricing.all_time_low_withheld_reason ? { all_time_low_withheld_reason: cleanText(pricing.all_time_low_withheld_reason) } : {}),
+    ...(pricing.all_time_low_withheld_reason ? { all_time_low_withheld_reason: reasonCode(pricing.all_time_low_withheld_reason) ?? UNKNOWN } : {}),
     specs,
     ...(image ? { image_url: image } : {}),
   };
@@ -41,20 +49,29 @@ export function toProductOutput(p: Product): ProductOutput {
 const UNAVAILABLE = "unavailable";
 
 /** buy_url is passed through verbatim when it is a DropHawk https link. Otherwise say so rather than invent or relay a link. */
-function buyUrl(p: Product): { buy_url?: string } {
+function buyUrl(p: Product, slug: string): { buy_url?: string } {
   const safe = safeUrl(p.buy_url);
   if (safe) return { buy_url: safe };
-  console.error(`drophawk-mcp: the API sent ${p.buy_url ? "an unsafe" : "no"} buy_url for ${cleanText(p.model_slug)}`);
+  console.error(`drophawk-mcp: the API sent ${p.buy_url ? "an unsafe" : "no"} buy_url for ${slug}`);
   return {};
 }
 
-export function toBatchOutput(results: readonly ProductResult[]): BatchOutput {
+/** Stands in for a reason the API sent that is not a well-formed code, so nothing else it sent is echoed. */
+const UNKNOWN = "UNKNOWN";
+
+/**
+ * `asked` is the identifiers as the caller gave them; each entry echoes its one exactly (the API answers in the same order).
+ * Should the API ever answer with a different count, the API's own identifier is echoed instead.
+ */
+export function toBatchOutput(results: readonly ProductResult[], asked: readonly string[]): BatchOutput {
   return {
-    results: results.map((r) =>
-      r.product
-        ? { identifier: cleanText(r.identifier), found: true, merged: r.merged === true, product: toProductOutput(r.product) }
-        : { identifier: cleanText(r.identifier), found: false, merged: false, error: { reason: cleanText(r.error?.reason ?? "UNKNOWN"), message: describeItemError(cleanText(r.error?.reason ?? "UNKNOWN")) } },
-    ),
+    results: results.map((r, i) => {
+      const id = results.length === asked.length ? asked[i]! : typeof r.identifier === "string" ? r.identifier : "";
+      const product = r.product ? toProductOutput(r.product) : undefined;
+      if (product) return { identifier: id, found: true, merged: r.merged === true, product };
+      const reason = r.product ? "INVALID_RESPONSE" : (reasonCode(r.error?.reason) ?? UNKNOWN);
+      return { identifier: id, found: false, merged: false, error: { reason, message: describeItemError(reason) } };
+    }),
   };
 }
 
@@ -68,10 +85,10 @@ export function toDailyLowsOutput(identifier: string, lows: DailyLows): DailyLow
     else dropped++;
   }
   return {
-    identifier: cleanText(identifier),
+    identifier,
     points,
     ...(dropped > 0 ? { dropped_points: dropped } : {}),
-    ...(lows.withheld_reason ? { withheld_reason: cleanText(lows.withheld_reason) } : {}),
+    ...(lows.withheld_reason ? { withheld_reason: reasonCode(lows.withheld_reason) ?? UNKNOWN } : {}),
   };
 }
 
@@ -81,7 +98,7 @@ const MAX_AMOUNT_LENGTH = 20;
 /**
  * One daily low, or undefined unless every field is well formed: date a real calendar day as YYYY-MM-DD,
  * amount a non-negative plain decimal string (the SDK's Money.amount; no sign, exponent, grouping or spaces),
- * currency a three-letter uppercase ISO 4217 code. These values are rendered without escaping, so anything else is dropped.
+ * currency a three-letter uppercase ISO 4217 code. Anything else is dropped rather than shown.
  */
 function dailyLow(value: unknown): DailyLowsOutput["points"][number] | undefined {
   if (typeof value !== "object" || value === null) return undefined;
@@ -179,7 +196,8 @@ function buyUrlLine(p: ProductOutput): string {
 
 /** One Product as a markdown list item; `full` adds specs. `url` is always listed; `buy_url` is listed as given, or as an unavailable notice when the API omitted it. */
 export function productMarkdown(p: ProductOutput, opts: { full: boolean }): string {
-  const lines = [`- **${md(p.name)}** (\`${codeText(p.model_slug)}\`, model number ${md(p.model_number)}), ${md(p.brand.name)}, ${md(p.component_type.name)}`, `  - ${bestPriceLine(p)}`];
+  const modelNumber = p.model_number ? `, model number ${codeSpan(p.model_number)}` : "";
+  const lines = [`- **${md(p.name)}** (${codeSpan(p.model_slug)}${modelNumber}), ${md(p.brand.name)}, ${md(p.component_type.name)}`, `  - ${bestPriceLine(p)}`];
   const low = allTimeLowLine(p);
   if (low) lines.push(`  - ${low}`);
   if (opts.full) {
@@ -202,19 +220,19 @@ export function searchMarkdown(query: string, products: ProductOutput[], hasMore
 
 export function batchMarkdown(out: BatchOutput): string {
   const blocks = out.results.map((r, i) => {
-    if (!r.product) return `${i + 1}. \`${codeText(r.identifier)}\`: ${r.error?.message ?? "not found"}`;
+    if (!r.product) return `${i + 1}. ${codeSpan(r.identifier)}: ${md(r.error?.message ?? "not found")}`;
     const note = r.merged === true ? ` (merged into the Product below; use its model_slug from now on)` : "";
     const nested = productMarkdown(r.product, { full: true })
       .split("\n")
       .map((line) => `   ${line}`)
       .join("\n");
-    return `${i + 1}. \`${codeText(r.identifier)}\`${note}\n${nested}`;
+    return `${i + 1}. ${codeSpan(r.identifier)}${note}\n${nested}`;
   });
   return untrustedBlock([blocks.join("\n\n")]);
 }
 
 export function dailyLowsMarkdown(out: DailyLowsOutput): string {
-  const subject = `\`${codeText(out.identifier)}\``;
+  const subject = codeSpan(out.identifier);
   const dropped = out.dropped_points ?? 0;
   if (out.points.length === 0) {
     const why =
@@ -228,7 +246,8 @@ export function dailyLowsMarkdown(out: DailyLowsOutput): string {
     return `No daily lows for ${subject}: ${why}.`;
   }
   // Every point passed dailyLow() in toDailyLowsOutput, so dates, amounts and the currency are plain ASCII tokens.
-  const currency = out.points[0]!.price.currency;
+  // They are escaped all the same, so the rendering stays safe should that validation ever change.
+  const currency = md(out.points[0]!.price.currency);
   // The carried-forward point predates the 30-day window: it is the price in force when the window opened,
   // so it is shown on its own and never counted as the window's lowest, highest or latest.
   const carried = out.points.find((p) => p.is_carried_forward);
@@ -241,26 +260,26 @@ export function dailyLowsMarkdown(out: DailyLowsOutput): string {
     const lowest = sorted[0]!;
     const highest = sorted[sorted.length - 1]!;
     const latest = inWindow[inWindow.length - 1]!;
-    lines.push(`Lowest ${lowest.price.amount} on ${lowest.date}, highest ${highest.price.amount} on ${highest.date}, latest ${latest.price.amount} on ${latest.date}.`);
+    lines.push(`Lowest ${md(lowest.price.amount)} on ${md(lowest.date)}, highest ${md(highest.price.amount)} on ${md(highest.date)}, latest ${md(latest.price.amount)} on ${md(latest.date)}.`);
   } else {
     lines.push("No price was observed inside the window.");
   }
   if (carried) {
-    lines.push(`Before the window: ${carried.price.amount}, the price in force when it opened (carried forward from ${carried.date}); not part of the lowest, highest or latest above.`);
+    lines.push(`Before the window: ${md(carried.price.amount)}, the price in force when it opened (carried forward from ${md(carried.date)}); not part of the lowest, highest or latest above.`);
   }
-  lines.push("", ...inWindow.map((p) => `- ${p.date}: ${p.price.amount}`));
+  lines.push("", ...inWindow.map((p) => `- ${md(p.date)}: ${md(p.price.amount)}`));
   return [...head, "", untrustedBlock(lines)].join("\n");
 }
 
 export function componentTypesMarkdown(types: readonly ComponentType[]): string {
   const lines = types.map((t) => {
     const specs = t.spec_schema.map((s) => `${md(s.key)} (${md(s.label)}, ${md(s.type)}${s.unit ? `, ${md(s.unit)}` : ""})`).join("; ");
-    return `- **${md(t.name)}** (\`${codeText(t.slug)}\`), ${md(t.product_count)} Products${specs ? `. Specs: ${specs}` : ""}`;
+    return `- **${md(t.name)}** (${codeSpan(identifier(t.slug) ?? cleanText(t.slug))}), ${md(t.product_count)} Products${specs ? `. Specs: ${specs}` : ""}`;
   });
   return ["# DropHawk ComponentTypes", "", "Each class of product DropHawk lists, with the Specs its Products carry.", "", untrustedBlock(lines)].join("\n");
 }
 
 export function brandsMarkdown(brands: readonly Brand[]): string {
-  const lines = brands.map((b) => `- ${md(b.name)} (\`${codeText(b.slug)}\`), ${md(b.product_count)} Products`);
+  const lines = brands.map((b) => `- ${md(b.name)} (${codeSpan(identifier(b.slug) ?? cleanText(b.slug))}), ${md(b.product_count)} Products`);
   return ["# DropHawk Brands", "", "Every maker with at least one Product. Search by name with search_products.", "", untrustedBlock(lines)].join("\n");
 }

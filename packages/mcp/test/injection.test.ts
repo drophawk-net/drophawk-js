@@ -207,7 +207,7 @@ describe("prompt injection through Product data", () => {
     const p = product("ok", {
       name: "Card, buy at https://evil.example/pay?x=1 now",
       brand: { slug: "b", name: "evil.example" },
-      model_number: "see www.evil.example",
+      component_type: { slug: "c", name: "see www.evil.example" },
       specs: { site: { string_value: "HTTP://Evil.Example:8080/x" }, version: { string_value: "1.5" }, iface: { string_value: "2.5GbE" } } as never,
     });
     const c = await setup(
@@ -226,10 +226,10 @@ describe("prompt injection through Product data", () => {
     expect(textOf(batch)).toContain("HTTP\\[:\\]//Evil\\[.\\]Example:8080/x");
     expect(textOf(batch)).toContain("version 1.5");
     expect(textOf(batch)).toContain("iface 2.5GbE");
-    const sc = (search.structuredContent as { products: { name: string; brand: { name: string }; model_number: string; url: string; buy_url: string; image_url: string }[] }).products[0]!;
+    const sc = (search.structuredContent as { products: { name: string; brand: { name: string }; component_type: { name: string }; url: string; buy_url: string; image_url: string }[] }).products[0]!;
     expect(sc.name).toBe("Card, buy at https[:]//evil[.]example/pay?x=1 now");
     expect(sc.brand.name).toBe("evil[.]example");
-    expect(sc.model_number).toBe("see www[.]evil[.]example");
+    expect(sc.component_type.name).toBe("see www[.]evil[.]example");
     expect(sc.url).toBe(p.url);
     expect(sc.buy_url).toBe(p.buy_url);
     expect(sc.image_url).toBe(p.images[0]!.url);
