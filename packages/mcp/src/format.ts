@@ -34,15 +34,40 @@ export function toProductOutput(p: Product): ProductOutput | undefined {
     component_type: { slug: identifier(p.component_type?.slug) ?? "", name: cleanText(p.component_type?.name) },
     url: safeUrl(p.url) ?? UNAVAILABLE,
     ...buy,
-    ...(pricing.best_price ? { best_price: money(pricing.best_price) } : {}),
-    ...(pricing.best_price_observed_at ? { best_price_observed_at: cleanText(pricing.best_price_observed_at) } : {}),
-    ...(pricing.best_price_withheld_reason ? { best_price_withheld_reason: reasonCode(pricing.best_price_withheld_reason) ?? UNKNOWN } : {}),
+    ...bestPrice(pricing),
     ...(Number.isSafeInteger(pricing.in_stock_count) && pricing.in_stock_count >= 0 ? { in_stock_count: pricing.in_stock_count } : {}),
-    ...(pricing.all_time_low ? { all_time_low: { ...money(pricing.all_time_low.price), date: cleanText(pricing.all_time_low.date) } } : {}),
-    ...(pricing.all_time_low_withheld_reason ? { all_time_low_withheld_reason: reasonCode(pricing.all_time_low_withheld_reason) ?? UNKNOWN } : {}),
+    ...allTimeLow(pricing),
     specs,
     ...(image ? { image_url: image } : {}),
   };
+}
+
+type Pricing = Product["pricing"];
+
+/**
+ * The best price, its time and its withheld reason. A price or time the API sent malformed is left out rather than
+ * coerced; a malformed price with no reason given is reported as withheld for an UNKNOWN reason.
+ */
+function bestPrice(pricing: Pricing): Pick<ProductOutput, "best_price" | "best_price_observed_at" | "best_price_withheld_reason"> {
+  const price = pricing.best_price === undefined ? undefined : money(pricing.best_price);
+  const observed = typeof pricing.best_price_observed_at === "string" && isTimestamp(pricing.best_price_observed_at) ? pricing.best_price_observed_at : undefined;
+  const reason = pricing.best_price_withheld_reason ? (reasonCode(pricing.best_price_withheld_reason) ?? UNKNOWN) : price === undefined && pricing.best_price !== undefined ? UNKNOWN : undefined;
+  return { ...(price ? { best_price: price } : {}), ...(price && observed ? { best_price_observed_at: observed } : {}), ...(reason ? { best_price_withheld_reason: reason } : {}) };
+}
+
+/** The all-time low, or its withheld reason; a malformed one is left out and reported as withheld for an UNKNOWN reason. */
+function allTimeLow(pricing: Pricing): Pick<ProductOutput, "all_time_low" | "all_time_low_withheld_reason"> {
+  const low = pricing.all_time_low;
+  const price = low === undefined || low === null ? undefined : money(low.price);
+  const valid = price !== undefined && isCalendarDate(low?.date) ? { ...price, date: low!.date } : undefined;
+  const reason = pricing.all_time_low_withheld_reason ? (reasonCode(pricing.all_time_low_withheld_reason) ?? UNKNOWN) : !valid && low !== undefined ? UNKNOWN : undefined;
+  return { ...(valid ? { all_time_low: valid } : {}), ...(reason ? { all_time_low_withheld_reason: reason } : {}) };
+}
+
+/** An RFC 3339 time in UTC or with an offset, such as 2026-10-09T01:02:03Z, on a real calendar day. */
+function isTimestamp(value: string): boolean {
+  const m = /^(\d{4}-\d{2}-\d{2})T([01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,9})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.exec(value);
+  return m !== null && isCalendarDate(m[1]);
 }
 
 /** Shown in place of a link that is missing or does not point at DropHawk over https. */
@@ -73,7 +98,8 @@ export function toBatchOutput(results: readonly ProductResult[], asked: readonly
     results: results.map((r, i) => {
       const id = asked[i]!;
       const product = r.product ? toProductOutput(r.product) : undefined;
-      if (product) return { identifier: id, found: true, merged: r.merged === true, product };
+      // merged is a required boolean; a found Product whose flag is anything else cannot be trusted to be the one asked for.
+      if (product && typeof r.merged === "boolean") return { identifier: id, found: true, merged: r.merged, product };
       return notFound(id, r.product ? "INVALID_RESPONSE" : (reasonCode(r.error?.reason) ?? UNKNOWN));
     }),
   };
@@ -106,16 +132,14 @@ const MAX_AMOUNT_LENGTH = 20;
 /**
  * One daily low, or undefined unless every field is well formed: date a real calendar day as YYYY-MM-DD,
  * amount a non-negative plain decimal string (the SDK's Money.amount; no sign, exponent, grouping or spaces),
- * currency a three-letter uppercase ISO 4217 code. Anything else is dropped rather than shown.
+ * currency a three-letter uppercase ISO 4217 code, is_carried_forward a boolean. Anything else is dropped rather than shown.
  */
 function dailyLow(value: unknown): DailyLowsOutput["points"][number] | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const { date, price, is_carried_forward } = value as { date?: unknown; price?: { amount?: unknown; currency?: unknown } | null; is_carried_forward?: unknown };
-  if (!isCalendarDate(date) || typeof price !== "object" || price === null) return undefined;
-  const { amount, currency } = price;
-  if (typeof amount !== "string" || amount.length > MAX_AMOUNT_LENGTH || !/^\d+(?:\.\d+)?$/.test(amount) || !Number.isFinite(Number(amount))) return undefined;
-  if (typeof currency !== "string" || !/^[A-Z]{3}$/.test(currency)) return undefined;
-  return { date, price: { amount, currency }, is_carried_forward: is_carried_forward === true };
+  const valid = money(price);
+  if (!isCalendarDate(date) || valid === undefined || typeof is_carried_forward !== "boolean") return undefined;
+  return { date, price: valid, is_carried_forward };
 }
 
 function isCalendarDate(value: unknown): value is string {
@@ -127,8 +151,13 @@ function isCalendarDate(value: unknown): value is string {
   return day.getUTCFullYear() === y && day.getUTCMonth() === mo - 1 && day.getUTCDate() === d;
 }
 
-function money(m: { amount: string; currency: string }): { amount: string; currency: string } {
-  return { amount: cleanText(m.amount), currency: cleanText(m.currency) };
+/** A price as the API sends it: a non-negative plain decimal string and a three-letter uppercase currency code; otherwise undefined. */
+function money(m: unknown): { amount: string; currency: string } | undefined {
+  if (typeof m !== "object" || m === null) return undefined;
+  const { amount, currency } = m as { amount?: unknown; currency?: unknown };
+  if (typeof amount !== "string" || amount.length > MAX_AMOUNT_LENGTH || !/^\d+(?:\.\d+)?$/.test(amount) || !Number.isFinite(Number(amount))) return undefined;
+  if (typeof currency !== "string" || !/^[A-Z]{3}$/.test(currency)) return undefined;
+  return { amount, currency };
 }
 
 function specValue(spec: SpecValue): string | number | boolean | undefined {

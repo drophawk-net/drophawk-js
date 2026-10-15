@@ -24,6 +24,8 @@ const MARKDOWN = /[\\`*[\]()<>|~#&]/g;
 //     (two or more letters, or xn-- punycode, not continued by a letter, digit, mark or hyphenated label) becomes "[.]",
 //     whatever precedes the domain                            www.evil.example -> www[.]evil[.]example, x-.evil.example -> x-.evil[.]example
 //   - every dot in a bare IPv4 address becomes "[.]"           1.2.3.4/x -> 1[.]2[.]3[.]4/x
+//   - the colon after a scheme a browser acts on without "//" (http, https, ftp, ws, wss, file, data, javascript,
+//     vbscript, blob) becomes "[:]" when something other than whitespace follows: javascript:alert(1) -> javascript[:]alert(1)
 // Lookalikes count as the ASCII character and become its defanged form: fullwidth, ideographic and small dots and a
 // percent-encoded dot (%2e); fullwidth, small, presentation-form, modifier (U+A789, U+02D0) and ratio (U+2236) colons;
 // fullwidth, fraction, division and big (U+29F8) slashes and backslashes; fullwidth digits in IPv4. "https:/host",
@@ -51,6 +53,10 @@ const SCHEME_SEP = new RegExp(
   `(?:[${COLONS}][${SLASH}]{2}|${AFTER_HTTP}[${COLONS}][${SLASH}]|${AFTER_HTTP}[${COLONS}](?=[\\p{L}\\p{N}\\[%]))([^\\s${SLASH}${COLONS}?#]*)`,
   "gu",
 );
+// The scheme of a URL a browser or linkifier would act on even without "//" (javascript:alert(1), https:@host, data:...),
+// at the start of a word and followed by something other than whitespace: its colon becomes "[:]" whatever follows.
+// "Data: 16 GB" or "File: manual" (a colon then a space) is ordinary text and is left alone.
+const SCHEME_COLON = new RegExp(`(?<![\\p{L}\\p{N}])((?:https?|ftp|wss?|file|data|javascript|vbscript|blob))[${COLONS}](?![\\s]|$)`, "giu");
 const LABEL_CHAR = "[\\p{L}\\p{N}\\p{M}]";
 const TLD = `(?:[xX][nN]--[\\p{L}\\p{N}\\p{M}-]{1,59}|\\p{L}[\\p{L}\\p{M}]{1,62})(?![\\p{L}\\p{N}\\p{M}]|-[\\p{L}\\p{N}\\p{M}-])`;
 const DOMAIN_DOT = new RegExp(`(?<=${LABEL_CHAR})${DOT}(?=${TLD})`, "gu");
@@ -66,6 +72,7 @@ function defang(text: string): string {
   return text
     .replace(DIGIT_PUNCTUATION, (c) => c.normalize("NFKC"))
     .replace(SCHEME_SEP, (_, host: string) => `[:]//${host.replace(BARE_DOTS, "[.]")}`)
+    .replace(SCHEME_COLON, "$1[:]")
     .replace(DOMAIN_DOT, "[.]")
     .replace(IPV4, (ip) => ip.replace(DOTS, "[.]"));
 }
