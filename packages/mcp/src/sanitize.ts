@@ -41,12 +41,14 @@ const MARKDOWN = /[\\`*[\]()<>|~#&]/g;
 // ahead of each dot, and IPv4 matches a bounded run. cleanText also caps the input before any of this runs.
 const DOT = "(?:[.\\uFF0E\\u3002\\uFF61\\u2024\\uFE52]|%2[eE])";
 const DOTS = new RegExp(DOT, "gu");
+// A dot that is not already the middle of a "[.]" token, for hosts that may hold defanged text already.
+const BARE_DOTS = new RegExp(`(?<!\\[)${DOT}(?!\\])`, "gu");
 const COLONS = ":\\uFF1A\\uFE55\\uFE13\\uA789\\u2236\\u02D0";
 const SLASH = "/\\\\\\uFF0F\\uFF3C\\u2044\\u2215\\u29F8";
 const AFTER_HTTP = "(?<=[hH][tT][tT][pP][sS]?)";
 // The host stops at a colon, so a separator nested in it ("foo://https://evil...") is matched and defanged in turn.
 const SCHEME_SEP = new RegExp(
-  `(?:[${COLONS}][${SLASH}]{2}|${AFTER_HTTP}[${COLONS}][${SLASH}]|${AFTER_HTTP}[${COLONS}](?=[\\p{L}\\p{N}\\[]))([^\\s${SLASH}${COLONS}?#]*)`,
+  `(?:[${COLONS}][${SLASH}]{2}|${AFTER_HTTP}[${COLONS}][${SLASH}]|${AFTER_HTTP}[${COLONS}](?=[\\p{L}\\p{N}\\[%]))([^\\s${SLASH}${COLONS}?#]*)`,
   "gu",
 );
 const LABEL_CHAR = "[\\p{L}\\p{N}\\p{M}]";
@@ -63,21 +65,30 @@ const IGNORABLE = /\p{Default_Ignorable_Code_Point}/gu;
 function defang(text: string): string {
   return text
     .replace(DIGIT_PUNCTUATION, (c) => c.normalize("NFKC"))
-    .replace(SCHEME_SEP, (_, host: string) => `[:]//${host.replace(DOTS, "[.]")}`)
+    .replace(SCHEME_SEP, (_, host: string) => `[:]//${host.replace(BARE_DOTS, "[.]")}`)
     .replace(DOMAIN_DOT, "[.]")
     .replace(IPV4, (ip) => ip.replace(DOTS, "[.]"));
 }
 
-// Percent-encoded letters, digits and - . _ ~ (the characters a URL never needs to encode), as a browser would read them.
+// A run of percent escapes. Each valid run is decoded as UTF-8 for detection, as a browser would read a host
+// (%EF%BD%85 is a fullwidth "e", which NFKC then makes "e"); a run that is not valid UTF-8 falls back to decoding only
+// its unreserved ASCII escapes (letters, digits and - . _ ~), and keeps the rest as written.
+const ESCAPE_RUN = /(?:%[0-9A-Fa-f]{2})+/g;
 const UNRESERVED_ESCAPE = /%(2[dDeE]|3\d|[46][1-9a-fA-F]|[57][0-9aA]|5[fF]|7[eE])/g;
 
-function decodeUnreserved(text: string): string {
-  return text.replace(UNRESERVED_ESCAPE, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)));
+function percentDecode(text: string): string {
+  return text.replace(ESCAPE_RUN, (run) => {
+    try {
+      return decodeURIComponent(run);
+    } catch {
+      return run.replace(UNRESERVED_ESCAPE, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)));
+    }
+  });
 }
 
 /**
- * Defangs text as written, then checks its NFKC form, with percent-encoded unreserved characters decoded
- * (evil.%63om), for a link that pass missed: circled, superscript, mathematical or
+ * Defangs text as written, then checks its NFKC form, with percent escapes decoded (evil.%63om,
+ * %EF%BD%85vil.com), for a link that pass missed: circled, superscript, mathematical or
  * other compatibility characters that only read as letters, digits, dots, colons or slashes once normalised (ⓔⓥⓘⓛ.ⓒⓞⓜ,
  * ¹.².³.⁴). Only then is the normalised form shown, defanged; otherwise the text keeps its own characters, so a name with
  * ™ or ½, or one whose links the first pass already caught, is shown as written. NFKC can lengthen text, so the
@@ -85,7 +96,7 @@ function decodeUnreserved(text: string): string {
  */
 function defangText(text: string): string {
   const defanged = defang(text);
-  const normal = preCap(decodeUnreserved(defanged).normalize("NFKC"), PRE_CAP * 4).replace(CONTROL, " ").replace(IGNORABLE, "");
+  const normal = preCap(percentDecode(defanged).normalize("NFKC"), PRE_CAP * 4).replace(CONTROL, " ").replace(IGNORABLE, "");
   if (normal === defanged) return defanged;
   const defangedNormal = defang(normal);
   return defangedNormal === normal ? defanged : defangedNormal;
@@ -167,10 +178,11 @@ const ONE_LINE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
 /**
  * Returns an identifier (model_slug, model number, Brand or ComponentType slug) exactly as given, or undefined.
  * Identifiers are passed back to the API, so they are never capped, defanged or otherwise rewritten: one that is empty,
- * longer than the API accepts or not a single line of visible text is rejected instead.
+ * longer than the API accepts, only whitespace, or not a single line of visible text is rejected instead.
  */
 export function identifier(value: unknown): string | undefined {
   if (typeof value !== "string" || value === "" || value.length > MAX_IDENTIFIER_BYTES) return undefined;
+  if (/^\p{White_Space}+$/u.test(value)) return undefined;
   if (ONE_LINE.test(value) || encoder.encode(value).length > MAX_IDENTIFIER_BYTES) return undefined;
   return value;
 }

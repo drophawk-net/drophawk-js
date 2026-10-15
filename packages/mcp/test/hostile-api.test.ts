@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanText } from "../src/sanitize.js";
+import { cleanText, identifier } from "../src/sanitize.js";
 import { connect, errorBody, json, mockFetch, product, textOf } from "./helpers.js";
 
 let close: (() => Promise<void>) | undefined;
@@ -366,12 +366,51 @@ describe("truncation never exposes an address", () => {
 
 describe("percent-encoded hosts", () => {
   it.each([
-    ["https:%65vil.%63om", "https[:]//evil[.]com"],
+    ["https:%65vil.%63om", "https[:]//%65vil[.]%63om"],
     ["https:///evil.%63om", "https[:]///evil[.]com"],
     ["see evil.%63%6Fm/pay", "see evil[.]com/pay"],
     ["100% cotton, 50%OFF", "100% cotton, 50%OFF"],
   ])("defangs %j", (input, out) => {
     expect(cleanText(input)).toBe(out);
     expect(cleanText(cleanText(input))).toBe(cleanText(input));
+  });
+});
+
+describe("percent-encoded UTF-8", () => {
+  const payload = "https:%EF%BD%85%EF%BD%96%EF%BD%89%EF%BD%8C.%EF%BD%83%EF%BD%8F%EF%BD%8D";
+  it("defangs a host spelled in percent-encoded fullwidth letters", () => {
+    expect(new URL(payload).hostname).toBe("evil.com");
+    const out = cleanText(payload);
+    expect(out).toBe("https[:]//%EF%BD%85%EF%BD%96%EF%BD%89%EF%BD%8C[.]%EF%BD%83%EF%BD%8F%EF%BD%8D");
+    expect(cleanText(out)).toBe(out);
+  });
+
+  it.each([
+    ["see %EF%BD%85vil.com", "see %EF%BD%85vil[.]com"],
+    ["see %EF%BD%85%EF%BD%96%EF%BD%89%EF%BD%8C%EF%BC%8E%EF%BD%83%EF%BD%8F%EF%BD%8D", "see evil[.]com"],
+    ["https%3A%2F%2Fevil.com", "https[:]//evil[.]com"],
+    ["https%3A%2F%2Fevil%2Ecom", "https[:]//evil[.]com"],
+    ["https:%zz.evil.com", "https[:]//%zz[.]evil[.]com"],
+    ["broken %E2%82 sequence and 100%", "broken %E2%82 sequence and 100%"],
+    ["price 50%EF%BC%85 off", "price 50%EF%BC%85 off"],
+  ])("handles %j", (input, out) => {
+    expect(cleanText(input)).toBe(out);
+    expect(cleanText(cleanText(input))).toBe(cleanText(input));
+  });
+
+  it("stays fast on 1 MB of escapes", () => {
+    const start = performance.now();
+    cleanText("%EF%BD%85".repeat(120_000));
+    cleanText("%E2%82".repeat(170_000));
+    expect(performance.now() - start).toBeLessThan(250);
+  });
+});
+
+describe("identifier()", () => {
+  it.each(["   ", " ", "  ", "　", "   "])("rejects whitespace-only %j", (value) => {
+    expect(identifier(value)).toBeUndefined();
+  });
+  it.each(["rtx-4090", " leading", "a b", "显卡"])("returns %j unchanged", (value) => {
+    expect(identifier(value)).toBe(value);
   });
 });
