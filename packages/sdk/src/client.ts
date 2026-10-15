@@ -1,5 +1,5 @@
 import { canSetUserAgent } from "./runtime.js";
-import { DropHawkError, readBodyText } from "./errors.js";
+import { discard, DropHawkError, readBodyText } from "./errors.js";
 import type {
   DailyLows,
   ListBrandsResponse,
@@ -159,7 +159,7 @@ export class DropHawk {
     // Redirects are followed (a merged Product answers 301 to its survivor, on the same origin), but the final URL must still be ours.
     // Anything else is a misconfigured or hostile endpoint, and its answer is not read. An empty url means the fetch implementation does not report one.
     if (response.url && safeOrigin(response.url) !== this.#origin) {
-      await response.body?.cancel().catch(() => undefined);
+      discard(response.body);
       throw new DropHawkError({ status: response.status, reason: "INVALID_RESPONSE", message: "DropHawk API request was redirected to a different origin; refusing to use the answer" });
     }
     if (!response.ok) throw await DropHawkError.fromResponse(response);

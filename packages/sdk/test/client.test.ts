@@ -338,6 +338,39 @@ describe("hardening", () => {
     expect(err.reason).toBe("INVALID_RESPONSE");
   });
 
+  describe("rejects promptly while an unread clone keeps the body alive", () => {
+    // Cancelling one branch of a tee resolves only once every branch is cancelled, so awaiting the cancel would hang forever here.
+    const kept: Response[] = [];
+    afterEach(() => void kept.splice(0));
+    function retaining(res: Response): () => Response {
+      return () => {
+        kept.push(res.clone());
+        return res;
+      };
+    }
+    const endless = () => new ReadableStream<Uint8Array>({ pull: (c) => c.enqueue(new Uint8Array(1024 * 1024).fill(0x20)) });
+    const within = <T,>(p: Promise<T>, ms = 1000) =>
+      Promise.race([p, new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`still pending after ${ms} ms`)), ms))]);
+
+    it.each([
+      ["a declared oversized body", () => new Response(endless(), { status: 200, headers: { "content-length": String(9 * 1024 * 1024) } })],
+      ["a streamed oversized body", () => new Response(endless(), { status: 200 })],
+      [
+        "a redirect to another origin",
+        () => {
+          const res = new Response(endless(), { status: 200 });
+          Object.defineProperty(res, "url", { value: "https://evil.example/v1/brands" });
+          return res;
+        },
+      ],
+    ])("%s", async (_, make) => {
+      const m = mockFetch(retaining(make()));
+      const err = await within(new DropHawk({ fetch: m.fetch }).listBrands().catch((e: unknown) => e));
+      expect(err).toBeInstanceOf(DropHawkError);
+      expect((err as DropHawkError).reason).toBe("INVALID_RESPONSE");
+    });
+  });
+
   it("still reads an ordinary body", async () => {
     const m = mockFetch(() => new Response(stream([new TextEncoder().encode('{"brands":'), new TextEncoder().encode("[]}")]), { status: 200 }));
     expect(await new DropHawk({ fetch: m.fetch }).listBrands()).toEqual({ brands: [] });

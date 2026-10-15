@@ -154,13 +154,21 @@ function tooLarge(status: number): DropHawkError {
 }
 
 /**
+ * @internal Cancels a body that will not be read, without waiting: when the caller's fetch kept an unread clone, the cancel
+ * only settles once that clone is cancelled too, so awaiting it could hang the call forever.
+ */
+export function discard(body: ReadableStream<Uint8Array> | null): void {
+  if (body) void body.cancel().catch(() => undefined);
+}
+
+/**
  * @internal Reads a response body as text, stopping at {@link MAX_BODY_BYTES}.
  * Read failures (an abort, a dropped connection) propagate untouched; an oversized body is INVALID_RESPONSE.
  */
 export async function readBodyText(response: Response): Promise<string> {
   const declared = Number(response.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
-    await response.body?.cancel().catch(() => undefined);
+    discard(response.body);
     throw tooLarge(response.status);
   }
   if (!response.body) return "";
@@ -174,7 +182,7 @@ export async function readBodyText(response: Response): Promise<string> {
       if (done) break;
       total += value.byteLength;
       if (total > MAX_BODY_BYTES) {
-        await reader.cancel().catch(() => undefined);
+        void reader.cancel().catch(() => undefined);
         throw tooLarge(response.status);
       }
       text += decoder.decode(value, { stream: true });
