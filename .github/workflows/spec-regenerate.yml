@@ -2,14 +2,14 @@ name: Spec regenerate
 
 # The DropHawk repository's spec sync pushes only spec/ to the `sync-spec` branch here and opens a pull request.
 # This workflow regenerates the generated files from that spec, and spec-regenerate-push.yml commits them to the
-# pull request. The two are split so that the code that runs here (this repository's codegen and its
-# dependencies, from the pull request) never runs next to a token that can write.
+# pull request. They are separate workflows so that the code that runs here (this repository's codegen and its
+# dependencies, from the pull request) never runs in a job that has secrets or a token that can write.
 #
-# This job has no secrets and a GITHUB_TOKEN that can only read this repository. Bun is a pinned release download
-# rather than setup-bun, whose post step would cache with a token after the codegen has run; the only post step left
-# is checkout's credential cleanup. The job's only output is an artifact holding the two generated files, which
-# spec-regenerate-push.yml treats as untrusted. Actions cache entries written here are scoped to the pull request's
-# ref, which main never restores.
+# This job has no secrets, no environment and a GITHUB_TOKEN that can only read this repository. Bun is a pinned
+# release download (SHA-256 from the release's SHASUMS256.txt) rather than setup-bun, whose post step would cache
+# with a token after the codegen has run; the only post step left is checkout's credential cleanup. The job's only
+# output is an artifact holding the two generated files, which spec-regenerate-push.yml treats as untrusted. Actions
+# cache entries written here are scoped to the pull request's ref, which main never restores.
 
 on:
   pull_request:
@@ -60,7 +60,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/generated"
           cp --parents "${paths[@]}" "$RUNNER_TEMP/generated/"
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: generated-code
           path: ${{ runner.temp }}/generated

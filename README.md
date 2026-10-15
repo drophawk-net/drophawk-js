@@ -29,8 +29,9 @@ This repository then regenerates the code on that pull request itself, in two wo
 - `spec-regenerate.yml` runs on pull requests from this repository's `sync-spec` branch (never forks).
   It runs `bun install --frozen-lockfile --ignore-scripts` and `bun run generate` with no secrets and a read-only token, and uploads only the two generated files.
 - `spec-regenerate-push.yml` runs on `workflow_run`, so it always uses `main`'s copy of itself and of its scripts and never runs pull request code.
-  It checks the artifact holds exactly the two generated files as regular files under a size cap, writes them into the pull request without following symlinks, and, only if they changed, commits and pushes them to `sync-spec` with the release App's token.
-  That push runs CI again, and the next regenerate finds nothing to commit.
+  Its `validate` job has no environment and no secrets: it checks the artifact holds exactly the two generated files as regular files under a size cap, compares them with the pull request's head commit read as git objects (never checked out), and records their SHA-256.
+  Only if they changed does its `push` job run, in the `spec-regenerate` environment: it checks the files against those SHA-256 values, builds the commit with git plumbing and pushes it with a dedicated App's token, only if `sync-spec` still points at the commit the files were generated from.
+  That push runs CI again, and the next regenerate finds nothing to commit; if a regenerate commit would itself need regenerating, the workflow fails instead of looping.
 
 Until the regenerate commit lands, CI's generated-code check fails on the sync pull request.
 The generated code comes from this repository's codegen and its dependencies, so review the whole diff, generated files included, before merging.
@@ -63,8 +64,6 @@ The Release workflow has three jobs with separate privileges:
   It runs in the `release` environment (restricted to `main`) and pushes with a GitHub App token, so CI runs on the pull request.
   Configure the App once: install it on this repository with contents and pull-requests write access, then set the variable `DROPHAWK_JS_RELEASE_CLIENT_ID` and the secret `DROPHAWK_JS_RELEASE_PRIVATE_KEY` on the `release` environment.
   The job's own `GITHUB_TOKEN` is read only and there is no fallback to it: until the App is configured, the job fails with an error naming what is missing, and no version pull request is opened.
-  `spec-regenerate-push.yml` uses the same environment and App, with a token limited to contents write, to push regenerated code to the `sync-spec` pull request.
-  The `release` environment must stay restricted to `main`; a `workflow_run` job runs on `main`, so it qualifies.
 - `build` installs with `--ignore-scripts`, tests, builds and packs tarballs, and uploads them.
   It has read-only repository access and cannot publish.
 - `publish` runs in the `npm` environment, downloads those tarballs and runs `npm publish` on each through trusted publishing, the SDK before the MCP server, from an empty temporary directory so no `.npmrc` in the repository can configure npm.
@@ -74,6 +73,17 @@ The Release workflow has three jobs with separate privileges:
 On npmjs.com, each package's trusted publisher must name workflow `release.yml` and environment `npm`, and each package must require two-factor authentication and disallow tokens.
 Dependencies are installed with a seven day minimum release age (`bunfig.toml`), and Dependabot proposes updates with a cooldown.
 See [SECURITY.md](SECURITY.md) to report a vulnerability.
+
+## Spec regenerate setup
+
+`spec-regenerate-push.yml` pushes with its own GitHub App, separate from the release App, and its own environment.
+Configure them once:
+
+1. Create a GitHub App owned by `drophawk-net`, e.g. `drophawk-js-spec-regenerate`: no webhook, repository permission `Contents: Read and write` only, "Only on this account".
+   Install it on this repository only.
+   Never add it as a bypass actor on a branch ruleset or protection rule.
+2. Create the environment `spec-regenerate` and restrict its deployment branches to `main` (a `workflow_run` job runs on `main`).
+3. On that environment, set the variable `DROPHAWK_JS_REGEN_CLIENT_ID` (the App's Client ID) and the secret `DROPHAWK_JS_REGEN_PRIVATE_KEY` (its private key).
 
 ## License
 

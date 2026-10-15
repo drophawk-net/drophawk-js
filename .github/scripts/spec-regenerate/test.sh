@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Exercises extract-generated.sh and apply-generated.sh against hostile fixtures.
-# Run: .github/scripts/spec-regenerate/test.sh   (needs bash, python3, unzip and zipinfo)
+# Exercises extract-generated.sh and commit-generated.sh against hostile fixtures.
+# Run: .github/scripts/spec-regenerate/test.sh   (needs bash, git, python3, unzip and zipinfo)
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 work="$(mktemp -d)"
@@ -14,6 +14,13 @@ nok()  { echo "  FAIL $1"; failed=$((failed+1)); }
 expect_fail() { local name="$1"; shift; if "$@" >/dev/null 2>&1; then nok "$name (should have failed)"; else ok "$name"; fi; }
 expect_pass() { local name="$1"; shift; if "$@" >/dev/null 2>&1; then ok "$name"; else nok "$name (should have passed)"; fi; }
 check() { local name="$1"; shift; if "$@"; then ok "$name"; else nok "$name"; fi; }
+# expect_msg NAME TEXT CMD...: CMD fails with TEXT in its output.
+expect_msg() {
+  local name="$1" text="$2"; shift 2
+  local output
+  if output="$("$@" 2>&1)"; then nok "$name (should have failed)"; return; fi
+  if grep -qF -- "$text" <<<"$output"; then ok "$name"; else nok "$name (failed without saying: $text)"; fi
+}
 # expect_quiet NAME MARKER CMD...: CMD fails and its output never contains MARKER (text from an untrusted name).
 expect_quiet() {
   local name="$1" marker="$2"; shift 2
@@ -97,37 +104,67 @@ expect_quiet "an unexpected name is refused without printing it" "::error::injec
 f="$(z "$sdk=a" "$mcp=b")"; o="$(out)"; mkdir "$o"
 expect_fail "an existing output directory is refused" extract "$f" "$o"
 
-echo "apply: destination symlinks, .git and drivers in the pull request checkout"
-new_clone() {
-  local d; d="$(mktemp -d -p "$work")"
-  mkdir -p "$d/.git" "$d/packages/sdk/src/generated" "$d/packages/mcp/src/generated"
-  echo old > "$d/$sdk"; echo "$d"
+echo "commit: plumbing on the fetched head commit, no working tree"
+export REGEN_NAME="drophawk-js spec regenerate" REGEN_EMAIL="spec-regenerate@users.noreply.drophawk.net"
+# new_repo: a bare repository whose single commit has the generated files plus a spec file; prints "GIT_DIR HEAD"
+new_repo() {
+  local src bare; src="$(mktemp -d -p "$work")"; bare="$(mktemp -d -p "$work")"
+  git -C "$src" init -q
+  mkdir -p "$src/packages/sdk/src/generated" "$src/packages/mcp/src/generated" "$src/spec"
+  echo "old sdk" > "$src/$sdk"; echo "old mcp" > "$src/$mcp"; echo "{}" > "$src/spec/developer-v1.openapi.json"
+  "$@" "$src"
+  git -C "$src" add -A
+  git -C "$src" -c user.name=t -c user.email=t@t commit -qm "chore: sync developer API spec"
+  git clone -q --bare "$src" "$bare"
+  echo "$bare $(git -C "$bare" rev-parse HEAD)"
 }
-p="$(out)"; extract "$(z "$sdk=new sdk" "$mcp=new mcp")" "$p" >/dev/null
-c="$(new_clone)"
-expect_pass "a clean checkout gets the generated files" "$here/apply-generated.sh" "$p" "$c"
-check "the SDK types were copied" [ "$(cat "$c/$sdk")" = "new sdk" ]
-check "the catalogue limits were copied" [ "$(cat "$c/$mcp")" = "new mcp" ]
+noop() { :; }
+payload() { local d; d="$(out)"; mkdir -p "$d/$(dirname "$sdk")" "$d/$(dirname "$mcp")"; echo "$1" > "$d/$sdk"; echo "$2" > "$d/$mcp"; echo "$d"; }
+commit() { "$here/commit-generated.sh" "$@"; }
 
-c="$(new_clone)"; rm -rf "$c/packages/sdk/src/generated"; ln -s "$secret" "$c/packages/sdk/src/generated"
-expect_fail "a symlinked generated directory is refused" "$here/apply-generated.sh" "$p" "$c"
-check "nothing was written through it" [ ! -e "$secret/api.ts" ]
-c="$(new_clone)"; rm -rf "$c/packages/mcp"; ln -s "$secret" "$c/packages/mcp"
-expect_fail "a symlinked ancestor is refused" "$here/apply-generated.sh" "$p" "$c"
-c="$(new_clone)"; rm "$c/$sdk"; ln -s "$secret/token" "$c/$sdk"
-expect_fail "a symlinked destination file is refused" "$here/apply-generated.sh" "$p" "$c"
-check "the link target is untouched" [ "$(cat "$secret/token")" = SECRET ]
-c="$(new_clone)"; rm "$c/$sdk"; mkdir "$c/$sdk"
-expect_fail "a directory at a destination is refused" "$here/apply-generated.sh" "$p" "$c"
-c="$(new_clone)"
-expect_fail "a destination inside .git is refused" env GENERATED_PATHS=".git/config" "$here/apply-generated.sh" "$p" "$c"
-expect_fail "path traversal is refused" env GENERATED_PATHS="packages/../../x" "$here/apply-generated.sh" "$p" "$c"
-c="$(new_clone)"; echo '* filter=evil' > "$c/.gitattributes"
-expect_fail "a .gitattributes filter driver is refused" "$here/apply-generated.sh" "$p" "$c"
-c="$(new_clone)"; mkdir -p "$c/$evil"; echo '*.ts diff=evil' > "$c/$evil/.gitattributes"
-expect_quiet "a driver under an untrusted directory name is refused without printing the name" "::error::injected" "$here/apply-generated.sh" "$p" "$c"
-c="$(new_clone)"; echo '*.png binary' > "$c/.gitattributes"
-expect_pass "a harmless .gitattributes is accepted" "$here/apply-generated.sh" "$p" "$c"
+read -r g h <<<"$(new_repo noop)"
+check "unchanged files report no change" [ "$(commit "$g" "$h" "$(payload "old sdk" "old mcp")" --check)" = "changed=false" ]
+check "changed files report a change" [ "$(commit "$g" "$h" "$(payload "new sdk" "old mcp")" --check)" = "changed=true" ]
+objects() { git -C "$g" cat-file --batch-all-objects --batch-check | wc -l; }
+before="$(objects)"; commit "$g" "$h" "$(payload "newest sdk" "old mcp")" --check >/dev/null
+check "--check writes no objects" [ "$(objects)" = "$before" ]
+p="$(payload "new sdk" "new mcp")"
+new="$(commit "$g" "$h" "$p")"
+check "a commit is created" [ -n "$new" ]
+check "its parent is the head commit" [ "$(git -C "$g" rev-parse "$new^")" = "$h" ]
+check "it holds the new SDK types" [ "$(git -C "$g" show "$new:$sdk")" = "new sdk" ]
+check "it holds the new catalogue limits" [ "$(git -C "$g" show "$new:$mcp")" = "new mcp" ]
+check "it changes only the generated paths" [ "$(git -C "$g" diff --name-only "$h" "$new" | sort | tr '\n' ' ')" = "$mcp $sdk " ]
+check "it is authored by the regenerate identity" [ "$(git -C "$g" log -1 --format='%an <%ae>' "$new")" = "$REGEN_NAME <$REGEN_EMAIL>" ]
+check "the branch ref is not moved" [ "$(git -C "$g" rev-parse HEAD)" = "$h" ]
+check "an unchanged payload creates no commit" [ -z "$(commit "$g" "$h" "$(payload "old sdk" "old mcp")")" ]
+read -r g2 _ <<<"$(new_repo noop)"
+git -C "$g2" fetch -q "$g" "$new" 2>/dev/null || cp -r "$g/objects/." "$g2/objects/"
+expect_fail "a further change on top of a regenerate commit is refused (no loop)" commit "$g2" "$new" "$(payload "newer sdk" "new mcp")"
+check "a regenerate commit that already matches reports no change" [ "$(commit "$g2" "$new" "$p" --check)" = "changed=false" ]
+
+add_missing() { rm "$1/$mcp"; }
+read -r g h <<<"$(new_repo add_missing)"
+new="$(commit "$g" "$h" "$(payload "old sdk" "new mcp")")"
+check "a generated file missing from the head is added" [ "$(git -C "$g" show "$new:$mcp")" = "new mcp" ]
+
+link_dir() { rm -rf "$1/packages/sdk/src/generated"; ln -s ../../mcp/src/generated "$1/packages/sdk/src/generated"; }
+read -r g h <<<"$(new_repo link_dir)"
+expect_msg "a symlinked ancestor in the head tree is refused" "is not a directory" commit "$g" "$h" "$(payload "new sdk" "new mcp")"
+link_file() { rm "$1/$sdk"; ln -s ../../../../spec/developer-v1.openapi.json "$1/$sdk"; }
+read -r g h <<<"$(new_repo link_file)"
+expect_fail "a symlink at a generated path in the head tree is refused" commit "$g" "$h" "$(payload "new sdk" "new mcp")"
+dir_file() { rm "$1/$sdk"; mkdir "$1/$sdk"; echo x > "$1/$sdk/x"; }
+read -r g h <<<"$(new_repo dir_file)"
+expect_fail "a directory at a generated path in the head tree is refused" commit "$g" "$h" "$(payload "new sdk" "new mcp")"
+file_parent() { rm -rf "$1/packages/mcp/src/generated"; echo x > "$1/packages/mcp/src/generated"; }
+read -r g h <<<"$(new_repo file_parent)"
+expect_msg "a file where a generated directory belongs is refused" "is not a directory" commit "$g" "$h" "$(payload "new sdk" "new mcp")"
+read -r g h <<<"$(new_repo noop)"
+expect_fail "a head that is not a full commit id is refused" commit "$g" "HEAD" "$(payload "new sdk" "new mcp")"
+expect_fail "a path in .git is refused" env GENERATED_PATHS=".git/config" "$here/commit-generated.sh" "$g" "$h" "$(payload a b)"
+p="$(payload "new sdk" "new mcp")"; rm "$p/$sdk"; ln -s "$secret/token" "$p/$sdk"
+expect_fail "a symlink in the payload is refused" commit "$g" "$h" "$p"
 
 echo "$pass passed, $failed failed"
 [ "$failed" -eq 0 ]
