@@ -205,9 +205,10 @@ jobs:
           private-key: ${{ secrets.DROPHAWK_JS_REGEN_PRIVATE_KEY }}
           permission-contents: write
 
-      # An exact compare-and-swap: the push lands only if the branch still points at the commit the files were
-      # generated from. If the spec sync rewrote the branch or deleted it (closing a stale pull request) in the
-      # meantime, the push is rejected and nothing is recreated; the run on the new head, if any, takes over.
+      # An exact compare-and-swap (push-generated.sh): the push lands only if the branch still points at the commit
+      # the files were generated from. Losing it ends with a notice, not a failure: the spec sync rewrote the branch
+      # or deleted it (closing a stale pull request), or another run for the same head already pushed its regenerate
+      # commit. The branch is never recreated.
       - name: Push to the sync branch
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -215,19 +216,7 @@ jobs:
         run: |
           auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
           echo "::add-mask::$auth"
-          export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_COUNT=1
           export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader" GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
-          url="https://github.com/$GITHUB_REPOSITORY.git"
-          cd "$RUNNER_TEMP/head.git"
-          if git -c core.hooksPath=/dev/null push --quiet --no-verify \
-            --force-with-lease="refs/heads/$SYNC_BRANCH:$HEAD_SHA" "$url" "$NEW_SHA:refs/heads/$SYNC_BRANCH"; then
-            echo "Pushed the regenerated files to $SYNC_BRANCH."
-            exit 0
-          fi
-          remote="$(git ls-remote "$url" "refs/heads/$SYNC_BRANCH" | cut -f1)"
-          if [ "$remote" != "$HEAD_SHA" ]; then
-            echo "::notice::$SYNC_BRANCH moved or was deleted while this run was working; nothing was pushed."
-            exit 0
-          fi
-          echo "::error::the push was rejected although $SYNC_BRANCH has not moved"
-          exit 1
+          trusted/.github/scripts/spec-regenerate/push-generated.sh "$RUNNER_TEMP/head.git" \
+            "https://github.com/$GITHUB_REPOSITORY.git" "$HEAD_SHA" "$NEW_SHA"

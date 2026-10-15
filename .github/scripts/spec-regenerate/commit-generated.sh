@@ -16,6 +16,7 @@
 # Loop guard: if HEAD_SHA is itself a regenerate commit and the files still differ, the generator is not
 # deterministic, and this fails rather than stacking another commit.
 set -euo pipefail
+set -f  # GENERATED_PATHS is split unquoted; never glob it
 git_dir="${1:?git dir}"
 head="${2:?head sha}"
 payload="${3:?payload dir}"
@@ -45,7 +46,7 @@ lookup() {
 declare -A blob=() file_mode=()
 changed=false
 for rel in $GENERATED_PATHS; do
-  case "$rel" in /*|*..*|.git|.git/*|*/.git|*/.git/*|*//*|*/) fail "refusing a path in GENERATED_PATHS" ;; esac
+  case "$rel" in /*|*..*|.git|.git/*|*/.git|*/.git/*|*//*|*/|*[[*?\\]*) fail "refusing a path in GENERATED_PATHS" ;; esac
   [ -f "$payload/$rel" ] && [ ! -L "$payload/$rel" ] || fail "payload $rel is not a regular file"
   # Walk down from the root: each ancestor must be a directory (or absent), the path itself a regular file
   # (or absent).

@@ -10,6 +10,7 @@
 # expected path is read with `unzip -p` into a file this script names, and reading stops at the size cap, so a
 # zip bomb cannot fill the disk. Failures never print names read from the archive.
 set -euo pipefail
+set -f  # GENERATED_PATHS is split unquoted; never glob it
 zip="${1:?zip}"
 out="${2:?out dir}"
 : "${GENERATED_PATHS:?}" "${MAX_FILE_BYTES:?}" "${MAX_ZIP_BYTES:?}"

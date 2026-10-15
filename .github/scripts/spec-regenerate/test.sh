@@ -195,9 +195,82 @@ check "an executable generated file keeps its mode" [ "$(git -C "$g" ls-tree --f
 
 read -r g h <<<"$(new_repo noop)"
 expect_fail "a head that is not a full commit id is refused" commit "$g" "HEAD" "$(payload "new sdk" "new mcp")"
+expect_fail "a glob in GENERATED_PATHS is refused" env GENERATED_PATHS="packages/*/src/generated/api.ts" "$here/commit-generated.sh" "$g" "$h" "$(payload a b)"
 expect_fail "a path in .git is refused" env GENERATED_PATHS=".git/config" "$here/commit-generated.sh" "$g" "$h" "$(payload a b)"
 p="$(payload "new sdk" "new mcp")"; rm "$p/$sdk"; ln -s "$secret/token" "$p/$sdk"
 expect_fail "a symlink in the payload is refused" commit "$g" "$h" "$p"
+
+echo "commit: trees around the generated paths"
+missing_dirs() { rm -rf "$1/packages/mcp"; }
+read -r g h <<<"$(new_repo missing_dirs)"
+new="$(commit "$g" "$h" "$(payload "old sdk" "new mcp")")"
+check "absent generated directories are created" [ "$(git -C "$g" show "$new:$mcp")" = "new mcp" ]
+check "the created tree passes fsck --strict" git -C "$g" fsck --strict --no-dangling --no-progress
+gitlink() { rm "$1/$sdk"; }
+read -r g h <<<"$(new_repo gitlink)"
+gl_tree="$(printf '160000 commit %s\tapi.ts\n' "$h" | git -C "$g" mktree)"
+gl_commit() { # replace packages/sdk/src/generated with gl_tree
+  local src sdkt pk root
+  src="$(printf '040000 tree %s\tgenerated\n' "$gl_tree" | git -C "$g" mktree)"
+  sdkt="$(printf '040000 tree %s\tsrc\n' "$src" | git -C "$g" mktree)"
+  pk="$( (git -C "$g" ls-tree "$h:packages" | grep -v $'\tsdk$'; printf '040000 tree %s\tsdk\n' "$sdkt") | git -C "$g" mktree)"
+  root="$( (git -C "$g" ls-tree "$h" | grep -v $'\tpackages$'; printf '040000 tree %s\tpackages\n' "$pk") | git -C "$g" mktree)"
+  git -C "$g" -c user.name=t -c user.email=t@t commit-tree "$root" -p "$h" -m gitlink
+}
+gl="$(gl_commit)"
+expect_msg "a gitlink at a generated path is refused" "is not a regular file" commit "$g" "$gl" "$(payload "new sdk" "new mcp")"
+siblings() {
+  local d="$1/packages/sdk/src/generated"
+  echo bak > "$d/api.ts.bak"; echo dash > "$d/api.ts-old"; echo dir > "$d/api.tsx"; mkdir "$d/api.ts.d"; echo x > "$d/api.ts.d/x"
+  echo sp > "$d/with space.ts"; echo nl > "$d/new"$'\n'"line.ts"; echo tab > "$d/tab"$'\t'"name.ts"; echo q > "$d/quo\"te'.ts"; echo u > "$d/ünï.ts"
+}
+read -r g h <<<"$(new_repo siblings)"
+new="$(commit "$g" "$h" "$(payload "new sdk" "new mcp")")"
+check "siblings that sort around api.ts give a valid tree" git -C "$g" fsck --strict --no-dangling --no-progress
+check "the new tree matches git's own result" [ "$(git -C "$g" rev-parse "$new^{tree}")" = "$(
+  idx="$(mktemp -p "$work")"; GIT_DIR="$g" GIT_INDEX_FILE="$idx" bash -c '
+    git read-tree "$1" && git update-index --cacheinfo "100644,$(git rev-parse "$2:$3")",$3 \
+      && git update-index --cacheinfo "100644,$(git rev-parse "$2:$4")",$4 && git write-tree' _ "$h" "$new" "$sdk" "$mcp")" ]
+check "special-character siblings are unchanged" [ "$(git -C "$g" rev-parse "$new:packages/sdk/src/generated/api.ts.bak" "$new:packages/sdk/src/generated/with space.ts" "$new:packages/sdk/src/generated/new"$'\n'"line.ts" "$new:packages/sdk/src/generated/ünï.ts")" = "$(git -C "$g" rev-parse "$h:packages/sdk/src/generated/api.ts.bak" "$h:packages/sdk/src/generated/with space.ts" "$h:packages/sdk/src/generated/new"$'\n'"line.ts" "$h:packages/sdk/src/generated/ünï.ts")" ]
+check "only the generated paths changed" [ "$(git -C "$g" diff --name-only "$h" "$new" | sort | tr '\n' ' ')" = "$mcp $sdk " ]
+
+echo "push: an exact compare-and-swap against the head commit"
+export SYNC_BRANCH=sync-spec
+# new_remote: prints "REMOTE_GIT_DIR LOCAL_GIT_DIR HEAD NEW" with sync-spec at HEAD and NEW built on it locally
+new_remote() {
+  local g h r l new
+  read -r g h <<<"$(new_repo noop)"
+  r="$(mktemp -d -p "$work")"; git clone -q --bare "$g" "$r"; git -C "$r" branch -q sync-spec "$h"
+  l="$(mktemp -d -p "$work")"; git init -q --bare "$l"; git -C "$l" fetch -q --depth=1 "file://$r" "$h"
+  new="$(commit "$l" "$h" "$(payload "new sdk" "new mcp")")"
+  echo "$r $l $h $new"
+}
+push() { "$here/push-generated.sh" "$@"; }
+read -r r l h new <<<"$(new_remote)"
+expect_pass "a push onto the unchanged branch lands" push "$l" "file://$r" "$h" "$new"
+check "the branch is now the regenerate commit" [ "$(git -C "$r" rev-parse sync-spec)" = "$new" ]
+read -r _ l2 _ new2 <<<"$(new_remote)"
+git -C "$l2" fetch -q "file://$r" "$h" 2>/dev/null
+new2="$(GIT_COMMITTER_DATE="2001-01-01T00:00:00Z" commit "$l2" "$h" "$(payload "new sdk" "new mcp")")"
+check "a second run for the same head builds a different commit" [ "$new2" != "$new" ]
+out="$(push "$l2" "file://$r" "$h" "$new2" 2>&1)"; status=$?
+check "the losing run of the same head ends without failing" [ "$status" -eq 0 ]
+check "it ends with a notice" grep -q '^::notice::' <<<"$out"
+check "the winner's commit stays" [ "$(git -C "$r" rev-parse sync-spec)" = "$new" ]
+read -r r l h new <<<"$(new_remote)"
+rewritten="$(git -C "$r" -c user.name=t -c user.email=t@t commit-tree "$h^{tree}" -m "chore: sync developer API spec (rewritten)")"
+git -C "$r" update-ref refs/heads/sync-spec "$rewritten"
+expect_pass "a branch rewritten by the spec sync ends without failing" push "$l" "file://$r" "$h" "$new"
+check "the rewritten branch is untouched" [ "$(git -C "$r" rev-parse sync-spec)" = "$rewritten" ]
+read -r r l h new <<<"$(new_remote)"
+git -C "$r" update-ref -d refs/heads/sync-spec
+expect_pass "a deleted branch ends without failing" push "$l" "file://$r" "$h" "$new"
+check "the deleted branch is not recreated" [ -z "$(git -C "$r" for-each-ref refs/heads/sync-spec)" ]
+read -r r l h new <<<"$(new_remote)"
+mkdir -p "$r/hooks"; printf '#!/bin/sh\nexit 1\n' > "$r/hooks/pre-receive"; chmod +x "$r/hooks/pre-receive"
+expect_fail "a rejection while the branch has not moved fails" push "$l" "file://$r" "$h" "$new"
+read -r r l h new <<<"$(new_remote)"
+expect_fail "an unreachable remote fails rather than reading as deleted" push "$l" "file://$work/nowhere.git" "$h" "$new"
 
 echo "$pass passed, $failed failed"
 [ "$failed" -eq 0 ]
