@@ -6,10 +6,12 @@ name: Release
 #   It holds no npm credentials, and its GITHUB_TOKEN can only read. It writes with a GitHub App token, which it requires,
 #   so that CI runs on that PR.
 # - "build" runs when no changesets are pending, i.e. after that PR is merged. It installs without
-#   lifecycle scripts, tests, builds and packs tarballs for versions that are not on npm yet, and uploads them.
+#   lifecycle scripts, tests, builds and packs tarballs for versions that are not released yet (not on npm, or on npm
+#   without a release tag after a partial run), and uploads them.
 #   It has read-only repository access and no id-token, so nothing it runs can publish.
 # - "publish" runs in the `npm` environment, downloads the tarballs and publishes exactly those through npm
-#   trusted publishing (OIDC): no long-lived npm token exists. It runs no repository code and installs nothing.
+#   trusted publishing (OIDC), tagging each as soon as it is on npm: no long-lived npm token exists. It runs no
+#   repository code and installs nothing. A rerun skips versions already on npm with the same tarball and still tags them.
 #   npm adds provenance automatically for a public repository.
 #
 # The trusted publisher on npmjs.com is bound to this exact file name and to the environment `npm`,
@@ -106,6 +108,8 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
+          # pack-unpublished.ts also packs a version that is on npm but has no release tag, so publish can tag it.
+          fetch-tags: true
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -129,7 +133,7 @@ jobs:
       # Fails this job until the repository has a LICENSE and every package.json a `license` field.
       # Also copies LICENSE into each package directory, then rewrites `workspace:` ranges for the tarballs.
       - id: pack
-        name: Pack tarballs for versions not yet on npm
+        name: Pack tarballs for versions not yet released
         run: |
           bun scripts/prepare-publish.ts
           bun run --filter @drophawk/sdk build
@@ -173,20 +177,12 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
-      - name: Publish tarballs
-        run: |
-          set -euo pipefail
-          : > release-tags.txt
-          for tarball in release-tarballs/*.tgz; do
-            # shellcheck disable=SC2016 # the backticks are a JavaScript template literal for node, not shell
-            id="$(tar -xzOf "$tarball" package/package.json | node -p 'const p = JSON.parse(require("fs").readFileSync(0, "utf8")); `${p.name}@${p.version}`')"
-            echo "Publishing $id from $tarball"
-            npm publish "$tarball" --access public
-            echo "$id" >> release-tags.txt
-          done
-
-      # The token lives only in this step's environment, as a one-off request header. No credential is persisted in .git/config.
-      - name: Push release tags
+      # Each version is published and then tagged at once, so a partial success is durable: when a later tarball fails,
+      # the earlier ones are already on npm and tagged. On a rerun, a version already on npm with exactly this tarball's
+      # integrity is not published again but is still tagged; one on npm with different contents fails the job, because
+      # it cannot be republished and tagging this commit would be wrong. The token lives only in this step's environment,
+      # as a one-off request header for git. No credential is persisted in .git/config.
+      - name: Publish and tag
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -196,7 +192,36 @@ jobs:
           export GIT_CONFIG_COUNT=1
           export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
           export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
-          while read -r tag; do
-            git tag "$tag" "$GITHUB_SHA"
-            git push origin "refs/tags/$tag"
-          done < release-tags.txt
+          failed=0
+          for tarball in release-tarballs/*.tgz; do
+            # shellcheck disable=SC2016 # the backticks are a JavaScript template literal for node, not shell
+            id="$(tar -xzOf "$tarball" package/package.json | node -p 'const p = JSON.parse(require("fs").readFileSync(0, "utf8")); `${p.name}@${p.version}`')"
+            integrity="sha512-$(openssl dgst -sha512 -binary "$tarball" | base64 -w0)"
+            # An unknown version of a known package prints nothing; an unknown package is E404. Anything else is a real failure.
+            if ! published="$(npm view "$id" dist.integrity 2> npm-view.err)"; then
+              if grep -qE 'E404|404 Not Found' npm-view.err; then
+                published=""
+              else
+                cat npm-view.err
+                echo "::error title=npm lookup failed::Could not look up $id on the npm registry."
+                exit 1
+              fi
+            fi
+            if [ -z "$published" ]; then
+              echo "Publishing $id from $tarball"
+              npm publish "$tarball" --access public
+            elif [ "$published" = "$integrity" ]; then
+              echo "$id is already on npm with this exact tarball; not publishing it again"
+            else
+              echo "::error title=$id already published::$id is on npm with different contents ($published, this build is $integrity). It cannot be republished; tag the commit it was published from by hand."
+              failed=1
+              continue
+            fi
+            if git ls-remote --exit-code --tags origin "refs/tags/$id" > /dev/null; then
+              echo "Tag $id already exists"
+            else
+              git tag "$id" "$GITHUB_SHA"
+              git push origin "refs/tags/$id"
+            fi
+          done
+          exit "$failed"

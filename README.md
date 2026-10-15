@@ -57,7 +57,8 @@ The Release workflow has three jobs with separate privileges:
 - `build` installs with `--ignore-scripts`, tests, builds and packs tarballs, and uploads them.
   It has read-only repository access and cannot publish.
 - `publish` runs in the `npm` environment, downloads those tarballs and runs `npm publish` on each through trusted publishing.
-  It then pushes the release tags with a step-scoped token.
+  It tags each version as soon as it is on npm, with a step-scoped token, so a run that fails part way leaves what it published tagged.
+  Rerunning it, or the whole workflow, publishes only what is missing: a version already on npm with the same tarball integrity is skipped and tagged, and one with different contents fails the job, to be tagged by hand at the commit it was published from.
 
 On npmjs.com, each package's trusted publisher must name workflow `release.yml` and environment `npm`, and each package must require two-factor authentication and disallow tokens.
 Dependencies are installed with a seven day minimum release age (`bunfig.toml`), and Dependabot proposes updates with a cooldown.
