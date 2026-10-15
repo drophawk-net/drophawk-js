@@ -201,48 +201,75 @@ jobs:
           repo="$PWD"
           work="$(mktemp -d)"
           cd "$work"
-          # Refuse anything but the two packages before publishing either of them.
+
+          # Text from a tarball or the registry is never put into a workflow command, and output from npm is
+          # prefixed so that none of its lines can start one.
+          quote() { sed 's/^/  | /'; }
+
+          # Before publishing anything: every tarball must be the SDK or the MCP server, at most one of each, and its
+          # package.json must name exactly that package with a plain version that matches the file name.
+          declare -A ids=() paths=()
           for file in "$tarballs"/*.tgz; do
             case "$(basename "$file")" in
-              drophawk-sdk-[0-9]*.tgz | drophawk-mcp-[0-9]*.tgz) ;;
+              drophawk-sdk-[0-9]*.tgz) package=drophawk-sdk ;;
+              drophawk-mcp-[0-9]*.tgz) package=drophawk-mcp ;;
               *)
-                echo "::error title=Unexpected tarball::Only drophawk-sdk and drophawk-mcp tarballs are published; found $file"
+                echo "::error title=Unexpected tarball::release-tarballs holds a file that is neither the SDK nor the MCP server tarball; nothing was published."
                 exit 1
                 ;;
             esac
+            if [ -n "${paths[$package]:-}" ]; then
+              echo "::error title=Several tarballs::There is more than one $package tarball; nothing was published."
+              exit 1
+            fi
+            name="@drophawk/${package#drophawk-}"
+            # shellcheck disable=SC2016 # the single-quoted script is JavaScript for node, not shell
+            if ! version="$(tar -xzOf "$file" package/package.json | EXPECTED="$name" node -e '
+                const p = JSON.parse(require("fs").readFileSync(0, "utf8"));
+                const ok = p.name === process.env.EXPECTED && typeof p.version === "string" && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/.test(p.version);
+                if (!ok) process.exit(1);
+                process.stdout.write(p.version);
+              ' 2> /dev/null)"; then
+              echo "::error title=Bad $package tarball::Its package.json does not name $name with a plain version; nothing was published."
+              exit 1
+            fi
+            if [ "$(basename "$file")" != "$package-$version.tgz" ]; then
+              echo "::error title=Bad $package tarball::Its file name does not match the version in its package.json; nothing was published."
+              exit 1
+            fi
+            ids[$package]="$name@$version"
+            paths[$package]="$file"
           done
+
+          # The SDK first: the MCP server depends on it. A package without a tarball is not part of this release.
           failed=0
           for package in drophawk-sdk drophawk-mcp; do
-            matches=("$tarballs/$package"-[0-9]*.tgz)
-            if [ "${#matches[@]}" -eq 0 ]; then
+            if [ -z "${paths[$package]:-}" ]; then
               echo "No tarball for $package; nothing to release for it"
               continue
             fi
-            if [ "${#matches[@]}" -gt 1 ]; then
-              echo "::error title=Several tarballs for $package::${matches[*]}"
-              exit 1
-            fi
-            tarball="${matches[0]}"
-            # shellcheck disable=SC2016 # the backticks are a JavaScript template literal for node, not shell
-            id="$(tar -xzOf "$tarball" package/package.json | node -p 'const p = JSON.parse(require("fs").readFileSync(0, "utf8")); `${p.name}@${p.version}`')"
+            id="${ids[$package]}"
+            tarball="${paths[$package]}"
             integrity="sha512-$(openssl dgst -sha512 -binary "$tarball" | base64 -w0)"
             # An unknown version of a known package prints nothing; an unknown package is E404. Anything else is a real failure.
-            if ! published="$(npm view "$id" dist.integrity 2> npm-view.err)"; then
+            if ! published="$(npm view -- "$id" dist.integrity 2> npm-view.err)"; then
               if grep -qE 'E404|404 Not Found' npm-view.err; then
                 published=""
               else
-                cat npm-view.err
+                quote < npm-view.err
                 echo "::error title=npm lookup failed::Could not look up $id on the npm registry."
                 exit 1
               fi
             fi
             if [ -z "$published" ]; then
-              echo "Publishing $id from $tarball"
-              npm publish "$tarball" --access public
+              echo "Publishing $id"
+              npm publish --access public -- "$tarball" 2>&1 | quote
             elif [ "$published" = "$integrity" ]; then
               echo "$id is already on npm with this exact tarball; not publishing it again"
             else
-              echo "::error title=$id already published::$id is on npm with different contents ($published, this build is $integrity). It cannot be republished; tag the commit it was published from by hand."
+              echo "npm has, for $id:"
+              printf '%s\n' "$published" | quote
+              echo "::error title=$id already published::$id is on npm with different contents than this build ($integrity). It cannot be republished; tag the commit it was published from by hand."
               failed=1
               continue
             fi
