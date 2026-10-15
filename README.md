@@ -23,8 +23,17 @@ Two files under `spec/` are copies of files that live in the private DropHawk re
 
 Do not edit the spec files or the generated files by hand.
 A workflow in the DropHawk repository runs whenever the source files change on its `main` branch.
-It copies both files here, runs `bun install --frozen-lockfile` and `bun run generate`, and opens or updates one pull request containing the spec and the regenerated code together.
-Because the pull request is pushed with a GitHub App token, CI runs on it, and it arrives complete and green.
+It copies only the two spec files to the `sync-spec` branch here and opens or updates one pull request; it runs no code from this repository.
+This repository then regenerates the code on that pull request itself, in two workflows:
+
+- `spec-regenerate.yml` runs on pull requests from this repository's `sync-spec` branch (never forks).
+  It runs `bun install --frozen-lockfile --ignore-scripts` and `bun run generate` with no secrets and a read-only token, and uploads only the two generated files.
+- `spec-regenerate-push.yml` runs on `workflow_run`, so it always uses `main`'s copy of itself and of its scripts and never runs pull request code.
+  It checks the artifact holds exactly the two generated files as regular files under a size cap, writes them into the pull request without following symlinks, and, only if they changed, commits and pushes them to `sync-spec` with the release App's token.
+  That push runs CI again, and the next regenerate finds nothing to commit.
+
+Until the regenerate commit lands, CI's generated-code check fails on the sync pull request.
+The generated code comes from this repository's codegen and its dependencies, so review the whole diff, generated files included, before merging.
 CI also fails any pull request whose generated files do not match `spec/`.
 
 ## Development
@@ -54,6 +63,8 @@ The Release workflow has three jobs with separate privileges:
   It runs in the `release` environment (restricted to `main`) and pushes with a GitHub App token, so CI runs on the pull request.
   Configure the App once: install it on this repository with contents and pull-requests write access, then set the variable `DROPHAWK_JS_RELEASE_CLIENT_ID` and the secret `DROPHAWK_JS_RELEASE_PRIVATE_KEY` on the `release` environment.
   The job's own `GITHUB_TOKEN` is read only and there is no fallback to it: until the App is configured, the job fails with an error naming what is missing, and no version pull request is opened.
+  `spec-regenerate-push.yml` uses the same environment and App, with a token limited to contents write, to push regenerated code to the `sync-spec` pull request.
+  The `release` environment must stay restricted to `main`; a `workflow_run` job runs on `main`, so it qualifies.
 - `build` installs with `--ignore-scripts`, tests, builds and packs tarballs, and uploads them.
   It has read-only repository access and cannot publish.
 - `publish` runs in the `npm` environment, downloads those tarballs and runs `npm publish` on each through trusted publishing, the SDK before the MCP server, from an empty temporary directory so no `.npmrc` in the repository can configure npm.

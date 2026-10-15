@@ -1,0 +1,68 @@
+name: Spec regenerate
+
+# The DropHawk repository's spec sync pushes only spec/ to the `sync-spec` branch here and opens a pull request.
+# This workflow regenerates the generated files from that spec, and spec-regenerate-push.yml commits them to the
+# pull request. The two are split so that the code that runs here (this repository's codegen and its
+# dependencies, from the pull request) never runs next to a token that can write.
+#
+# This job has no secrets and a GITHUB_TOKEN that can only read this repository. Bun is a pinned release download
+# rather than setup-bun, whose post step would cache with a token after the codegen has run; the only post step left
+# is checkout's credential cleanup. The job's only output is an artifact holding the two generated files, which
+# spec-regenerate-push.yml treats as untrusted. Actions cache entries written here are scoped to the pull request's
+# ref, which main never restores.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+env:
+  BUN_VERSION: "1.3.10"
+  BUN_SHA256: f57bc0187e39623de716ba3a389fda5486b2d7be7131a980ba54dc7b733d2e08
+  GENERATED_PATHS: >-
+    packages/sdk/src/generated/api.ts
+    packages/mcp/src/generated/catalogue-limits.ts
+
+jobs:
+  generate:
+    # Only the sync branch in this repository; never a fork, even one with a branch of the same name.
+    if: >-
+      github.repository == 'drophawk-net/drophawk-js' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'sync-spec'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Install Bun
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSLo bun.zip "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip"
+          echo "${BUN_SHA256}  bun.zip" | sha256sum -c -
+          unzip -q bun.zip
+          echo "$RUNNER_TEMP/bun-linux-x64" >> "$GITHUB_PATH"
+
+      - name: Regenerate
+        run: |
+          bun install --frozen-lockfile --ignore-scripts
+          bun run generate
+
+      - name: Stage the generated files
+        run: |
+          read -ra paths <<<"$GENERATED_PATHS"
+          mkdir -p "$RUNNER_TEMP/generated"
+          cp --parents "${paths[@]}" "$RUNNER_TEMP/generated/"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: generated-code
+          path: ${{ runner.temp }}/generated
+          if-no-files-found: error
+          retention-days: 1

@@ -1,0 +1,153 @@
+name: Spec regenerate push
+
+# Commits the files the "Spec regenerate" workflow generated to its `sync-spec` pull request, then pushes them with
+# the release App's token so CI runs on the result. The App push triggers "Spec regenerate" again, which then
+# generates the same files, and this workflow finds nothing to commit.
+#
+# A workflow_run workflow always runs the default branch's copy of this file and, here, only the default branch's
+# scripts. It never runs pull request code: the pull request is checked out only as files to write into, and the
+# artifact from the untrusted run is read with extract-generated.sh, which accepts exactly the generated paths as
+# regular files under a size cap. Because it runs on main, it can use the `release` environment, which is
+# restricted to main and holds the App credentials.
+
+on:
+  workflow_run:
+    workflows: ["Spec regenerate"]
+    types: [completed]
+
+concurrency:
+  group: spec-regenerate-push
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  SYNC_BRANCH: sync-spec
+  GENERATED_PATHS: >-
+    packages/sdk/src/generated/api.ts
+    packages/mcp/src/generated/catalogue-limits.ts
+  # The generated files are about 60 KB together; these leave ample room and bound what an untrusted run can upload.
+  MAX_FILE_BYTES: "2097152"
+  MAX_ZIP_BYTES: "2097152"
+
+jobs:
+  push:
+    if: >-
+      github.repository == 'drophawk-net/drophawk-js' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.head_branch == 'sync-spec'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Restricted to main. Holds the variable DROPHAWK_JS_RELEASE_CLIENT_ID and the secret
+    # DROPHAWK_JS_RELEASE_PRIVATE_KEY, shared with release.yml's version job.
+    environment: release
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      # main's scripts; nothing from the pull request runs in this job.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          path: trusted
+          persist-credentials: false
+
+      # Acts only on the open pull request from this repository's sync branch into main, and only while its head
+      # is still the commit the artifact was generated from.
+      - name: Find the sync pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          owner="${GITHUB_REPOSITORY%%/*}"
+          prs="$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&base=main&head=$owner:$SYNC_BRANCH" \
+            --jq "[.[] | select(.head.repo.full_name == \"$GITHUB_REPOSITORY\" and .head.ref == \"$SYNC_BRANCH\")]")"
+          if [ "$(jq length <<<"$prs")" != 1 ]; then
+            echo "::notice::No single open pull request from $SYNC_BRANCH into main; nothing to do."
+            echo "act=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "$(jq -r '.[0].head.sha' <<<"$prs")" != "$HEAD_SHA" ]; then
+            echo "::notice::$SYNC_BRANCH has moved on since this artifact was generated; the newer run will handle it."
+            echo "act=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "act=true" >> "$GITHUB_OUTPUT"
+
+      # The size is checked before downloading, and the download is cut off at the cap regardless.
+      - name: Download the generated files
+        if: steps.pr.outputs.act == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts?name=generated-code" --jq '[.artifacts[] | select(.name == "generated-code")]')"
+          [ "$(jq length <<<"$artifacts")" = 1 ] || { echo "::error::expected exactly one generated-code artifact"; exit 1; }
+          [ "$(jq -r '.[0].expired' <<<"$artifacts")" = false ] || { echo "::error::the generated-code artifact has expired"; exit 1; }
+          size="$(jq -r '.[0].size_in_bytes' <<<"$artifacts")"
+          [ "$size" -le "$MAX_ZIP_BYTES" ] || { echo "::error::the artifact is $size bytes, over the $MAX_ZIP_BYTES byte cap"; exit 1; }
+          id="$(jq -r '.[0].id' <<<"$artifacts")"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" | head -c "$((MAX_ZIP_BYTES + 1))" > "$RUNNER_TEMP/generated.zip"
+          trusted/.github/scripts/spec-regenerate/extract-generated.sh "$RUNNER_TEMP/generated.zip" "$RUNNER_TEMP/generated"
+
+      # Files to write into, not code to run.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        if: steps.pr.outputs.act == 'true'
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          path: pr
+          persist-credentials: false
+
+      - name: Apply the generated files and commit
+        if: steps.pr.outputs.act == 'true'
+        id: commit
+        env:
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_ATTR_NOSYSTEM: "1"
+        run: |
+          safe_git() { git -c core.hooksPath=/dev/null -c core.fsmonitor= -c core.attributesFile=/dev/null "$@"; }
+          trusted/.github/scripts/spec-regenerate/apply-generated.sh "$RUNNER_TEMP/generated" pr
+          cd pr
+          if [ -z "$(safe_git status --porcelain)" ]; then
+            echo "The generated files already match the spec; nothing to commit."
+            echo "changed=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          read -ra paths <<<"$GENERATED_PATHS"
+          safe_git add -- "${paths[@]}"
+          safe_git -c user.name="drophawk-js spec regenerate" -c user.email="noreply@drophawk.net" \
+            commit --quiet --no-verify -m "chore: regenerate code from the synced spec"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      # The App key is used only when there is something to push.
+      - id: app-token
+        if: steps.commit.outputs.changed == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.DROPHAWK_JS_RELEASE_CLIENT_ID }}
+          private-key: ${{ secrets.DROPHAWK_JS_RELEASE_PRIVATE_KEY }}
+          permission-contents: write
+
+      # Not a force push: it lands only if the branch is still at the commit the files were generated from. If the
+      # spec sync rewrote the branch in the meantime, the push is rejected and the run on the new head takes over.
+      - name: Push to the sync branch
+        if: steps.commit.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          cd pr
+          export GIT_CONFIG_NOSYSTEM=1 GIT_ATTR_NOSYSTEM=1 GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader" GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
+          if git -c core.hooksPath=/dev/null push --quiet --no-verify origin "HEAD:refs/heads/$SYNC_BRANCH"; then
+            echo "Pushed the regenerated files to $SYNC_BRANCH."
+            exit 0
+          fi
+          remote="$(git ls-remote origin "refs/heads/$SYNC_BRANCH" | cut -f1)"
+          if [ "$remote" != "$HEAD_SHA" ]; then
+            echo "::notice::$SYNC_BRANCH moved while this run was working; the run on its new head will regenerate."
+            exit 0
+          fi
+          echo "::error::the push was rejected although $SYNC_BRANCH has not moved"
+          exit 1
