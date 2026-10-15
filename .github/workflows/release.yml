@@ -210,6 +210,7 @@ jobs:
           # Before publishing anything: every tarball must be the SDK or the MCP server, at most one of each, and its
           # package.json must name exactly that package with a plain version that matches the file name.
           declare -A ids=() paths=()
+          sdk_dependency=""
           for file in "$tarballs"/*.tgz; do
             case "$(basename "$file")" in
               drophawk-sdk-[0-9]*.tgz) package=drophawk-sdk ;;
@@ -224,26 +225,52 @@ jobs:
               exit 1
             fi
             name="@drophawk/${package#drophawk-}"
+            # Prints the version, and for the MCP server also the SDK version its dependency range was resolved from.
             # shellcheck disable=SC2016 # the single-quoted script is JavaScript for node, not shell
-            if ! version="$(tar -xzOf "$file" package/package.json | EXPECTED="$name" node -e '
+            if ! manifest="$(tar -xzOf "$file" package/package.json | EXPECTED="$name" node -e '
                 const p = JSON.parse(require("fs").readFileSync(0, "utf8"));
-                const ok = p.name === process.env.EXPECTED && typeof p.version === "string" && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/.test(p.version);
-                if (!ok) process.exit(1);
-                process.stdout.write(p.version);
+                const semver = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/;
+                if (p.name !== process.env.EXPECTED || typeof p.version !== "string" || !semver.test(p.version)) process.exit(1);
+                let line = p.version;
+                if (p.name === "@drophawk/mcp") {
+                  const range = p.dependencies?.["@drophawk/sdk"];
+                  const m = typeof range === "string" ? /^[\^~]?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)$/.exec(range) : null;
+                  if (!m) process.exit(1);
+                  line += " " + m[1];
+                }
+                process.stdout.write(line);
               ' 2> /dev/null)"; then
-              echo "::error title=Bad $package tarball::Its package.json does not name $name with a plain version; nothing was published."
+              echo "::error title=Bad $package tarball::Its package.json does not name $name with a plain version (and, for the MCP server, a plain @drophawk/sdk range); nothing was published."
               exit 1
             fi
+            read -r version dependency <<< "$manifest"
             if [ "$(basename "$file")" != "$package-$version.tgz" ]; then
               echo "::error title=Bad $package tarball::Its file name does not match the version in its package.json; nothing was published."
               exit 1
             fi
+            if [ "$package" = drophawk-mcp ]; then sdk_dependency="$dependency"; fi
             ids[$package]="$name@$version"
             paths[$package]="$file"
           done
 
+          # Prints the integrity npm has for a version, or nothing when npm does not have it. Any other failure makes it fail,
+          # which ends the job: it is only ever called in a plain assignment, under set -e. Diagnostics go to stderr.
+          registry_integrity() {
+            local out
+            if out="$(npm view -- "$1" dist.integrity 2> npm-view.err)"; then
+              printf '%s' "$out"
+            elif grep -qE 'E404|404 Not Found' npm-view.err; then
+              :
+            else
+              quote < npm-view.err >&2
+              echo "::error title=npm lookup failed::Could not look up $1 on the npm registry." >&2
+              return 1
+            fi
+          }
+
           # The SDK first: the MCP server depends on it. A package without a tarball is not part of this release.
-          failed=0
+          # Any failure ends the job at once, so nothing is published after a package that did not make it to npm.
+          sdk_released=""
           for package in drophawk-sdk drophawk-mcp; do
             if [ -z "${paths[$package]:-}" ]; then
               echo "No tarball for $package; nothing to release for it"
@@ -251,17 +278,16 @@ jobs:
             fi
             id="${ids[$package]}"
             tarball="${paths[$package]}"
-            integrity="sha512-$(openssl dgst -sha512 -binary "$tarball" | base64 -w0)"
-            # An unknown version of a known package prints nothing; an unknown package is E404. Anything else is a real failure.
-            if ! published="$(npm view -- "$id" dist.integrity 2> npm-view.err)"; then
-              if grep -qE 'E404|404 Not Found' npm-view.err; then
-                published=""
-              else
-                quote < npm-view.err
-                echo "::error title=npm lookup failed::Could not look up $id on the npm registry."
+            if [ "$package" = drophawk-mcp ] && [ "$sdk_released" != "@drophawk/sdk@$sdk_dependency" ]; then
+              # Not released by this run: the SDK version the MCP server was built against must already be on npm.
+              sdk_on_npm="$(registry_integrity "@drophawk/sdk@$sdk_dependency")"
+              if [ -z "$sdk_on_npm" ]; then
+                echo "::error title=SDK not on npm::$id depends on @drophawk/sdk@$sdk_dependency, which is not on npm and was not released by this run; $id was not published."
                 exit 1
               fi
             fi
+            integrity="sha512-$(openssl dgst -sha512 -binary "$tarball" | base64 -w0)"
+            published="$(registry_integrity "$id")"
             if [ -z "$published" ]; then
               echo "Publishing $id"
               npm publish --access public -- "$tarball" 2>&1 | quote
@@ -270,9 +296,8 @@ jobs:
             else
               echo "npm has, for $id:"
               printf '%s\n' "$published" | quote
-              echo "::error title=$id already published::$id is on npm with different contents than this build ($integrity). It cannot be republished; tag the commit it was published from by hand."
-              failed=1
-              continue
+              echo "::error title=$id already published::$id is on npm with different contents than this build ($integrity). It cannot be republished, and nothing after it is published; tag the commit it was published from by hand."
+              exit 1
             fi
             if git -C "$repo" ls-remote --exit-code --tags origin "refs/tags/$id" > /dev/null; then
               echo "Tag $id already exists"
@@ -280,5 +305,5 @@ jobs:
               git -C "$repo" tag "$id" "$GITHUB_SHA"
               git -C "$repo" push origin "refs/tags/$id"
             fi
+            if [ "$package" = drophawk-sdk ]; then sdk_released="$id"; fi
           done
-          exit "$failed"
