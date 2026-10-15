@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { Brand, ComponentType, DailyLows, Product, ProductResult, SpecValue } from "@drophawk/sdk";
 import { describeItemError } from "./errors.js";
-import { cleanText, codeSpan, identifier, reasonCode, safeUrl } from "./sanitize.js";
+import { cleanText, codeSpan, reasonCode, safeUrl, slug as validSlug, identifier } from "./sanitize.js";
 import type { BatchOutput, DailyLowsOutput, ProductOutput } from "./output.js";
 
 /**
@@ -9,9 +9,9 @@ import type { BatchOutput, DailyLowsOutput, ProductOutput } from "./output.js";
  * Returns undefined when the model_slug is not a valid identifier: without it the Product cannot be looked up again.
  */
 export function toProductOutput(p: Product): ProductOutput | undefined {
-  const slug = identifier(p.model_slug);
+  const slug = validSlug(p.model_slug);
   if (slug === undefined) {
-    console.error("drophawk-mcp: the API sent a Product with an invalid model_slug; it is left out");
+    console.error("drophawk-mcp: the API sent a Product with an invalid model_slug (not a lowercase hyphenated slug); it is left out");
     return undefined;
   }
   const pricing = p.pricing;
@@ -30,8 +30,8 @@ export function toProductOutput(p: Product): ProductOutput | undefined {
     model_slug: slug,
     name: cleanText(p.name),
     model_number: identifier(p.model_number) ?? "",
-    brand: { slug: identifier(p.brand?.slug) ?? "", name: cleanText(p.brand?.name) },
-    component_type: { slug: identifier(p.component_type?.slug) ?? "", name: cleanText(p.component_type?.name) },
+    brand: { slug: validSlug(p.brand?.slug) ?? "", name: cleanText(p.brand?.name) },
+    component_type: { slug: validSlug(p.component_type?.slug) ?? "", name: cleanText(p.component_type?.name) },
     url: safeUrl(p.url) ?? UNAVAILABLE,
     ...link,
     ...bestPrice(pricing),
@@ -67,7 +67,7 @@ function allTimeLow(pricing: Pricing): Pick<ProductOutput, "all_time_low" | "all
 
 /** An RFC 3339 time in UTC or with an offset, such as 2026-10-09T01:02:03Z, on a real calendar day. */
 function isTimestamp(value: string): boolean {
-  const m = /^(\d{4}-\d{2}-\d{2})T([01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,9})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.exec(value);
+  const m = /^(\d{4}-\d{2}-\d{2})T([01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,9})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/i.exec(value);
   return m !== null && isCalendarDate(m[1]);
 }
 
@@ -120,7 +120,7 @@ export function toDailyLowsOutput(asked: string, lows: DailyLows): DailyLowsOutp
     else dropped++;
   }
   // The Product the series belongs to, and the window it covers, as the API names them; each is left out unless well formed.
-  const slug = identifier(lows.model_slug);
+  const slug = validSlug(lows.model_slug);
   return {
     identifier: asked,
     ...(slug !== undefined ? { model_slug: slug } : {}),
@@ -132,8 +132,23 @@ export function toDailyLowsOutput(asked: string, lows: DailyLows): DailyLowsOutp
   };
 }
 
-/** Longest decimal amount accepted, in characters. Far beyond any real price, short enough that Number() stays exact enough to sort. */
-const MAX_AMOUNT_LENGTH = 32;
+/**
+ * Longest decimal amount accepted, in characters. The spec sets no maximum, so this is only a sanity bound against
+ * absurd input; no real price comes near it. Amounts are compared as decimal strings, never as numbers.
+ */
+const MAX_AMOUNT_LENGTH = 64;
+
+/** Orders two amounts already known to match the plain decimal pattern, without converting them to numbers. */
+export function compareAmounts(a: string, b: string): number {
+  const [ai = "", af = ""] = a.split(".");
+  const [bi = "", bf = ""] = b.split(".");
+  if (ai.length !== bi.length) return ai.length - bi.length;
+  if (ai !== bi) return ai < bi ? -1 : 1;
+  const width = Math.max(af.length, bf.length);
+  const x = af.padEnd(width, "0");
+  const y = bf.padEnd(width, "0");
+  return x === y ? 0 : x < y ? -1 : 1;
+}
 
 /**
  * One daily low, or undefined unless every field is well formed: date a real calendar day as YYYY-MM-DD,
@@ -161,7 +176,7 @@ function isCalendarDate(value: unknown): value is string {
 function money(m: unknown): { amount: string; currency: string } | undefined {
   if (typeof m !== "object" || m === null) return undefined;
   const { amount, currency } = m as { amount?: unknown; currency?: unknown };
-  if (typeof amount !== "string" || amount.length > MAX_AMOUNT_LENGTH || !/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(amount) || !Number.isFinite(Number(amount))) return undefined;
+  if (typeof amount !== "string" || amount.length > MAX_AMOUNT_LENGTH || !/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(amount)) return undefined;
   if (typeof currency !== "string" || !/^[A-Z]{3}$/.test(currency)) return undefined;
   return { amount, currency };
 }
@@ -278,7 +293,13 @@ export function batchMarkdown(out: BatchOutput): string {
 
 export function dailyLowsMarkdown(out: DailyLowsOutput): string {
   const subject = codeSpan(out.model_slug ?? out.identifier);
-  const merged = out.is_merged === true ? ` (the identifier ${codeSpan(out.identifier)} was merged into this Product; use its model_slug from now on)` : "";
+  // Outside the untrusted block only the caller's own identifier and a pattern-validated model_slug are shown.
+  const merged =
+    out.is_merged !== true
+      ? ""
+      : out.model_slug
+        ? ` (the identifier ${codeSpan(out.identifier)} was merged into this Product; use its model_slug from now on)`
+        : ` (the identifier ${codeSpan(out.identifier)} is stale: DropHawk merged that Product into another; look the Product up again)`;
   const dropped = out.dropped_points ?? 0;
   if (out.points.length === 0) {
     const why =
@@ -303,7 +324,7 @@ export function dailyLowsMarkdown(out: DailyLowsOutput): string {
   if (dropped > 0) head.push(`${dropped} malformed ${dropped === 1 ? "point was" : "points were"} dropped and ${dropped === 1 ? "is" : "are"} not shown.`);
   const lines: string[] = [];
   if (inWindow.length > 0) {
-    const sorted = [...inWindow].sort((a, b) => Number(a.price.amount) - Number(b.price.amount));
+    const sorted = [...inWindow].sort((a, b) => compareAmounts(a.price.amount, b.price.amount));
     const lowest = sorted[0]!;
     const highest = sorted[sorted.length - 1]!;
     const latest = inWindow[inWindow.length - 1]!;
@@ -333,6 +354,6 @@ export function brandsMarkdown(brands: readonly Brand[]): string {
 
 /** A slug as a code span, exactly as the API sent it, or a notice when it is not a valid identifier: never a rewritten slug. */
 function slugText(slug: unknown): string {
-  const id = identifier(slug);
+  const id = validSlug(slug);
   return id === undefined ? "slug unavailable" : codeSpan(id);
 }

@@ -1,5 +1,8 @@
 import * as z from "zod/v4";
 
+/** The spec's pattern for a slug the API names: lowercase letters and digits joined by single hyphens. */
+const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
 /** An amount in one currency; `amount` is a decimal string, copied from the API untouched. */
 export const moneySchema = z.object({
   amount: z.string().describe('Decimal string, for example "1299.00". It may have more or fewer decimal places than the currency\'s minor units and is never rounded. Do not parse it as a float.'),
@@ -13,11 +16,11 @@ const specValueSchema = z.object({
 
 /** One Product as the tools return it in `structuredContent`. */
 export const productSchema = z.object({
-  model_slug: z.string().describe("The Product's identifier. Pass it to get_products or get_daily_lows."),
+  model_slug: z.string().max(256).regex(SLUG).describe("The Product's identifier. Pass it to get_products or get_daily_lows."),
   name: z.string(),
   model_number: z.string(),
-  brand: z.object({ slug: z.string(), name: z.string() }),
-  component_type: z.object({ slug: z.string(), name: z.string() }),
+  brand: z.object({ slug: z.union([z.literal(""), z.string().max(256).regex(SLUG)]), name: z.string() }),
+  component_type: z.object({ slug: z.union([z.literal(""), z.string().max(256).regex(SLUG)]), name: z.string() }),
   url: z.string().describe("The Product's page on drophawk.net, with the full price comparison and history. For someone still comparing."),
   best_price_url: z
     .string()
@@ -65,7 +68,7 @@ export type BatchOutput = z.infer<typeof batchOutputSchema>;
 
 export const dailyLowsOutputSchema = z.object({
   identifier: z.string().describe("The identifier exactly as it was asked for."),
-  model_slug: z.string().optional().describe("The Product the series belongs to; after a merge, the survivor. Store this rather than identifier."),
+  model_slug: z.string().max(256).regex(SLUG).optional().describe("The Product the series belongs to; after a merge, the survivor. Store this rather than identifier."),
   is_merged: z.boolean().optional().describe("True when identifier named a Product that DropHawk merged into model_slug."),
   window_start: z.string().optional().describe("The first UTC day of the 30-day window, YYYY-MM-DD. The carried-forward point, if any, is dated before it."),
   points: z

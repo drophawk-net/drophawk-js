@@ -226,6 +226,16 @@ const ONE_LINE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
  * Identifiers are passed back to the API, so they are never capped, defanged or otherwise rewritten: one that is empty,
  * longer than the API accepts, only whitespace, or not a single line of visible text is rejected instead.
  */
+/**
+ * A slug the API sent (Product model_slug, Brand and ComponentType slug), or undefined unless it matches the spec's
+ * `^[a-z0-9]+(-[a-z0-9]+)*$` and fits the identifier length cap. Unlike {@link identifier} this admits no free text,
+ * so a validated slug is safe to render outside the untrusted data block.
+ */
+export function slug(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > MAX_IDENTIFIER_BYTES) return undefined;
+  return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value) ? value : undefined;
+}
+
 export function identifier(value: unknown): string | undefined {
   if (typeof value !== "string" || value === "" || value.length > MAX_IDENTIFIER_BYTES) return undefined;
   if (/^\p{White_Space}+$/u.test(value)) return undefined;
