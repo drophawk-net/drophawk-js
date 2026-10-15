@@ -148,7 +148,11 @@ export class DropHawk {
     }
     const headers: Record<string, string> = { Accept: "application/json" };
     if (this.#userAgent) headers["User-Agent"] = this.#userAgent;
-    const init: RequestInit = { method, headers, redirect: "follow", credentials: "omit" };
+    // GET follows redirects: a merged Product answers 301 to its survivor, and the final URL is checked below. A redirected GET
+    // carries no body and no credentials, and a browser cannot follow redirects itself (a manual redirect is opaque there).
+    // The batch POST is never redirected by the API, and following a 307 or 308 would resend its body to wherever the redirect
+    // points before any check could run, so for POST fetch must not follow at all and any redirect is INVALID_RESPONSE.
+    const init: RequestInit = { method, headers, redirect: method === "GET" ? "follow" : "manual", credentials: "omit" };
     if (opts.json !== undefined) {
       headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(opts.json);
@@ -161,6 +165,10 @@ export class DropHawk {
     if (response.url && safeOrigin(response.url) !== this.#origin) {
       discard(response.body);
       throw new DropHawkError({ status: response.status, reason: "INVALID_RESPONSE", message: "DropHawk API request was redirected to a different origin; refusing to use the answer" });
+    }
+    if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)) {
+      discard(response.body);
+      throw new DropHawkError({ status: response.status, reason: "INVALID_RESPONSE", message: `DropHawk API answered a ${method} with a redirect; refusing to follow it` });
     }
     if (!response.ok) throw await DropHawkError.fromResponse(response);
     // Reading the body may fail for reasons that are not ours to hide (an abort, a dropped connection): let those through.

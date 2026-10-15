@@ -74,6 +74,8 @@ The SDK follows that redirect for you, so `getProduct` returns the surviving Pro
 To find out whether an identifier you stored is stale, compare it with `(await dh.getProduct(identifier)).model_slug`.
 `getDailyLows` follows the redirect too but its response does not name the Product, so call `getProduct` when you need the canonical slug.
 In a batch there is no redirect: the result has `merged: true` and `product` is the survivor, which is the signal to rely on.
+The batch request is sent with `redirect: "manual"`, so its body is never resent elsewhere, and a redirect in answer to it is `INVALID_RESPONSE`.
+Any request whose final URL is on another origin than `baseUrl` is `INVALID_RESPONSE` too.
 
 ### Batches
 

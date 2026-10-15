@@ -388,6 +388,36 @@ describe("hardening", () => {
     expect(err.reason).toBe("INVALID_RESPONSE");
   });
 
+  it("never lets fetch follow a redirect for the batch POST, so its body is never resent elsewhere", async () => {
+    const m = mockFetch(() => json({ results: [] }));
+    await new DropHawk({ fetch: m.fetch }).getProducts(["a"]);
+    expect(m.calls[0]!.init.method).toBe("POST");
+    expect(m.calls[0]!.init.redirect).toBe("manual");
+  });
+
+  it.each([301, 302, 303, 307, 308])("rejects a %i answer to the batch POST", async (status) => {
+    const m = mockFetch(() => new Response(null, { status, headers: { location: "https://evil.example/v1/products:batchGet" } }));
+    const err = await new DropHawk({ fetch: m.fetch }).getProducts(["a"]).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DropHawkError);
+    expect((err as DropHawkError).reason).toBe("INVALID_RESPONSE");
+    expect(m.calls).toHaveLength(1);
+  });
+
+  it("rejects an opaque redirect (how a browser reports a manual redirect) to the batch POST", async () => {
+    const res = new Response(null, { status: 200 });
+    Object.defineProperty(res, "type", { value: "opaqueredirect" });
+    Object.defineProperty(res, "status", { value: 0 });
+    Object.defineProperty(res, "ok", { value: false });
+    const err = await new DropHawk({ fetch: mockFetch(() => res).fetch }).getProducts(["a"]).catch((e: unknown) => e);
+    expect((err as DropHawkError).reason).toBe("INVALID_RESPONSE");
+  });
+
+  it("still follows redirects for GET (a merged Product answers 301)", async () => {
+    const m = mockFetch(() => json({ brands: [] }));
+    await new DropHawk({ fetch: m.fetch }).listBrands();
+    expect(m.calls[0]!.init.redirect).toBe("follow");
+  });
+
   it("rejects a redirect to another origin even when the answer is an error", async () => {
     const m = mockFetch(() => json({}, { status: 500, url: "http://api.drophawk.net/v1/brands", redirected: true }));
     const err = await new DropHawk({ fetch: m.fetch }).listBrands().catch((e) => e);
