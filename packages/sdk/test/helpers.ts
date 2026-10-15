@@ -46,9 +46,9 @@ export function product(slug = "rtx-4090", overrides: Partial<Product> = {}): Pr
     component_type: { slug: "gpu", name: "Graphics Cards" },
     specs: { vram: { number_value: 24, unit: "GB" } },
     images: [],
-    pricing: { best_price: { amount: "1999.00", currency: "AUD" }, in_stock_count: 3 },
+    pricing: { best_price: { price: { amount: "1999.00", currency: "AUD" }, observed_at: "2026-10-16T01:00:00Z" }, in_stock_count: 3 },
     url: `https://drophawk.net/p/${slug}`,
-    buy_url: `https://go.drophawk.net/p/${slug}?src=api&rep=json&sig=a%2Bb`,
+    best_price_url: `https://go.drophawk.net/p/${slug}?src=api&rep=json&sig=a%2Bb`,
     ...overrides,
   } as Product;
 }

@@ -25,7 +25,7 @@ export function toProductOutput(p: Product): ProductOutput | undefined {
     specs[cleanText(key)] = unit ? { value, unit } : { value };
   }
   const image = safeUrl(p.images?.[0]?.url);
-  const buy = buyUrl(p, slug);
+  const link = bestPriceUrl(p, slug);
   return {
     model_slug: slug,
     name: cleanText(p.name),
@@ -33,7 +33,7 @@ export function toProductOutput(p: Product): ProductOutput | undefined {
     brand: { slug: identifier(p.brand?.slug) ?? "", name: cleanText(p.brand?.name) },
     component_type: { slug: identifier(p.component_type?.slug) ?? "", name: cleanText(p.component_type?.name) },
     url: safeUrl(p.url) ?? UNAVAILABLE,
-    ...buy,
+    ...link,
     ...bestPrice(pricing),
     ...(Number.isSafeInteger(pricing.in_stock_count) && pricing.in_stock_count >= 0 ? { in_stock_count: pricing.in_stock_count } : {}),
     ...allTimeLow(pricing),
@@ -45,14 +45,15 @@ export function toProductOutput(p: Product): ProductOutput | undefined {
 type Pricing = Product["pricing"];
 
 /**
- * The best price, its time and its withheld reason. A price or time the API sent malformed is left out rather than
- * coerced; a malformed price with no reason given is reported as withheld for an UNKNOWN reason.
+ * The best price (its Money and the time it was observed) and its withheld reason. A price or time the API sent malformed
+ * is left out rather than coerced; a malformed best price with no reason given is reported as withheld for an UNKNOWN reason.
  */
-function bestPrice(pricing: Pricing): Pick<ProductOutput, "best_price" | "best_price_observed_at" | "best_price_withheld_reason"> {
-  const price = pricing.best_price === undefined ? undefined : money(pricing.best_price);
-  const observed = typeof pricing.best_price_observed_at === "string" && isTimestamp(pricing.best_price_observed_at) ? pricing.best_price_observed_at : undefined;
-  const reason = pricing.best_price_withheld_reason ? (reasonCode(pricing.best_price_withheld_reason) ?? UNKNOWN) : price === undefined && pricing.best_price !== undefined ? UNKNOWN : undefined;
-  return { ...(price ? { best_price: price } : {}), ...(price && observed ? { best_price_observed_at: observed } : {}), ...(reason ? { best_price_withheld_reason: reason } : {}) };
+function bestPrice(pricing: Pricing): Pick<ProductOutput, "best_price" | "best_price_withheld_reason"> {
+  const best: { price?: unknown; observed_at?: unknown } | null | undefined = pricing.best_price;
+  const price = best === undefined || best === null ? undefined : money(best.price);
+  const observed = typeof best?.observed_at === "string" && isTimestamp(best.observed_at) ? best.observed_at : undefined;
+  const reason = pricing.best_price_withheld_reason ? (reasonCode(pricing.best_price_withheld_reason) ?? UNKNOWN) : price === undefined && best !== undefined && best !== null ? UNKNOWN : undefined;
+  return { ...(price ? { best_price: { price, ...(observed ? { observed_at: observed } : {}) } } : {}), ...(reason ? { best_price_withheld_reason: reason } : {}) };
 }
 
 /** The all-time low, or its withheld reason; a malformed one is left out and reported as withheld for an UNKNOWN reason. */
@@ -73,11 +74,11 @@ function isTimestamp(value: string): boolean {
 /** Shown in place of a link that is missing or does not point at DropHawk over https. */
 const UNAVAILABLE = "unavailable";
 
-/** buy_url is passed through verbatim when it is a DropHawk https link. Otherwise say so rather than invent or relay a link. */
-function buyUrl(p: Product, slug: string): { buy_url?: string } {
-  const safe = safeUrl(p.buy_url);
-  if (safe) return { buy_url: safe };
-  console.error(`drophawk-mcp: the API sent ${p.buy_url ? "an unsafe" : "no"} buy_url for ${slug}`);
+/** best_price_url is passed through verbatim when it is a DropHawk https link. Otherwise say so rather than invent or relay a link. */
+function bestPriceUrl(p: Product, slug: string): { best_price_url?: string } {
+  const safe = safeUrl(p.best_price_url);
+  if (safe) return { best_price_url: safe };
+  console.error(`drophawk-mcp: the API sent ${p.best_price_url ? "an unsafe" : "no"} best_price_url for ${slug}`);
   return {};
 }
 
@@ -98,18 +99,18 @@ export function toBatchOutput(results: readonly ProductResult[], asked: readonly
     results: results.map((r, i) => {
       const id = asked[i]!;
       const product = r.product ? toProductOutput(r.product) : undefined;
-      // merged is a required boolean; a found Product whose flag is anything else cannot be trusted to be the one asked for.
-      if (product && typeof r.merged === "boolean") return { identifier: id, found: true, merged: r.merged, product };
+      // is_merged is a required boolean; a found Product whose flag is anything else cannot be trusted to be the one asked for.
+      if (product && typeof r.is_merged === "boolean") return { identifier: id, found: true, is_merged: r.is_merged, product };
       return notFound(id, r.product ? "INVALID_RESPONSE" : (reasonCode(r.error?.reason) ?? UNKNOWN));
     }),
   };
 }
 
 function notFound(id: string, reason: string): BatchOutput["results"][number] {
-  return { identifier: id, found: false, merged: false, error: { reason, message: describeItemError(reason) } };
+  return { identifier: id, found: false, is_merged: false, error: { reason, message: describeItemError(reason) } };
 }
 
-export function toDailyLowsOutput(identifier: string, lows: DailyLows): DailyLowsOutput {
+export function toDailyLowsOutput(asked: string, lows: DailyLows): DailyLowsOutput {
   const points: DailyLowsOutput["points"] = [];
   let dropped = 0;
   for (const p of (Array.isArray(lows.points) ? lows.points : []) as unknown[]) {
@@ -118,8 +119,13 @@ export function toDailyLowsOutput(identifier: string, lows: DailyLows): DailyLow
     if (point && (points.length === 0 || point.price.currency === points[0]!.price.currency)) points.push(point);
     else dropped++;
   }
+  // The Product the series belongs to, and the window it covers, as the API names them; each is left out unless well formed.
+  const slug = identifier(lows.model_slug);
   return {
-    identifier,
+    identifier: asked,
+    ...(slug !== undefined ? { model_slug: slug } : {}),
+    ...(typeof lows.is_merged === "boolean" ? { is_merged: lows.is_merged } : {}),
+    ...(isCalendarDate(lows.window_start) ? { window_start: lows.window_start } : {}),
     points,
     ...(dropped > 0 ? { dropped_points: dropped } : {}),
     ...(lows.withheld_reason ? { withheld_reason: reasonCode(lows.withheld_reason) ?? UNKNOWN } : {}),
@@ -127,7 +133,7 @@ export function toDailyLowsOutput(identifier: string, lows: DailyLows): DailyLow
 }
 
 /** Longest decimal amount accepted, in characters. Far beyond any real price, short enough that Number() stays exact enough to sort. */
-const MAX_AMOUNT_LENGTH = 20;
+const MAX_AMOUNT_LENGTH = 32;
 
 /**
  * One daily low, or undefined unless every field is well formed: date a real calendar day as YYYY-MM-DD,
@@ -155,7 +161,7 @@ function isCalendarDate(value: unknown): value is string {
 function money(m: unknown): { amount: string; currency: string } | undefined {
   if (typeof m !== "object" || m === null) return undefined;
   const { amount, currency } = m as { amount?: unknown; currency?: unknown };
-  if (typeof amount !== "string" || amount.length > MAX_AMOUNT_LENGTH || !/^\d+(?:\.\d+)?$/.test(amount) || !Number.isFinite(Number(amount))) return undefined;
+  if (typeof amount !== "string" || amount.length > MAX_AMOUNT_LENGTH || !/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(amount) || !Number.isFinite(Number(amount))) return undefined;
   if (typeof currency !== "string" || !/^[A-Z]{3}$/.test(currency)) return undefined;
   return { amount, currency };
 }
@@ -186,9 +192,9 @@ function untrustedBlock(lines: readonly string[]): string {
 
 function bestPriceLine(p: ProductOutput): string {
   if (p.best_price) {
-    const observed = p.best_price_observed_at ? `, last observed ${md(p.best_price_observed_at)}` : "";
+    const observed = p.best_price.observed_at ? `, last observed ${md(p.best_price.observed_at)}` : "";
     const where = p.in_stock_count === undefined ? "in stock" : `in stock at ${p.in_stock_count} ${p.in_stock_count === 1 ? "retailer" : "retailers"}`;
-    return `Best price: ${fmt(p.best_price)} (${where}${observed})`;
+    return `Best price: ${fmt(p.best_price.price)} (${where}${observed})`;
   }
   switch (p.best_price_withheld_reason) {
     case "OUT_OF_STOCK":
@@ -226,14 +232,14 @@ function urlLine(p: ProductOutput): string {
   return `url: ${safeUrl(p.url) ?? UNAVAILABLE}`;
 }
 
-function buyUrlLine(p: ProductOutput): string {
-  const buy = safeUrl(p.buy_url);
-  if (!buy) return p.url === UNAVAILABLE ? "buy_url: unavailable" : "buy_url: unavailable, use url";
-  if (!p.best_price) return `buy_url: ${buy} (no best price right now, so this only opens the Product page; give url instead)`;
-  return `buy_url: ${buy}`;
+function bestPriceUrlLine(p: ProductOutput): string {
+  const buy = safeUrl(p.best_price_url);
+  if (!buy) return p.url === UNAVAILABLE ? "best_price_url: unavailable" : "best_price_url: unavailable, use url";
+  if (!p.best_price) return `best_price_url: ${buy} (no best price right now, so this only opens the Product page; give url instead)`;
+  return `best_price_url: ${buy}`;
 }
 
-/** One Product as a markdown list item; `full` adds specs. `url` is always listed; `buy_url` is listed as given, or as an unavailable notice when the API omitted it. */
+/** One Product as a markdown list item; `full` adds specs. `url` is always listed; `best_price_url` is listed as given, or as an unavailable notice when the API omitted it. */
 export function productMarkdown(p: ProductOutput, opts: { full: boolean }): string {
   const modelNumber = p.model_number ? `, model number ${codeSpan(p.model_number)}` : "";
   const lines = [`- **${md(p.name)}** (${codeSpan(p.model_slug)}${modelNumber}), ${md(p.brand.name)}, ${md(p.component_type.name)}`, `  - ${bestPriceLine(p)}`];
@@ -243,7 +249,7 @@ export function productMarkdown(p: ProductOutput, opts: { full: boolean }): stri
     const specs = specsLine(p);
     if (specs) lines.push(`  - ${specs}`);
   }
-  lines.push(`  - ${urlLine(p)}`, `  - ${buyUrlLine(p)}`);
+  lines.push(`  - ${urlLine(p)}`, `  - ${bestPriceUrlLine(p)}`);
   return lines.join("\n");
 }
 
@@ -260,7 +266,7 @@ export function searchMarkdown(query: string, products: ProductOutput[], hasMore
 export function batchMarkdown(out: BatchOutput): string {
   const blocks = out.results.map((r, i) => {
     if (!r.product) return `${i + 1}. ${codeSpan(r.identifier)}: ${md(r.error?.message ?? "not found")}`;
-    const note = r.merged === true ? ` (merged into the Product below; use its model_slug from now on)` : "";
+    const note = r.is_merged === true ? ` (merged into the Product below; use its model_slug from now on)` : "";
     const nested = productMarkdown(r.product, { full: true })
       .split("\n")
       .map((line) => `   ${line}`)
@@ -271,7 +277,8 @@ export function batchMarkdown(out: BatchOutput): string {
 }
 
 export function dailyLowsMarkdown(out: DailyLowsOutput): string {
-  const subject = codeSpan(out.identifier);
+  const subject = codeSpan(out.model_slug ?? out.identifier);
+  const merged = out.is_merged === true ? ` (the identifier ${codeSpan(out.identifier)} was merged into this Product; use its model_slug from now on)` : "";
   const dropped = out.dropped_points ?? 0;
   if (out.points.length === 0) {
     const why =
@@ -282,7 +289,7 @@ export function dailyLowsMarkdown(out: DailyLowsOutput): string {
           : out.withheld_reason === "NO_DATA" || !out.withheld_reason
             ? "DropHawk has no price history for it"
             : `the series is unknown (${md(out.withheld_reason)})`;
-    return `No daily lows for ${subject}: ${why}.`;
+    return `No daily lows for ${subject}${merged}: ${why}.`;
   }
   // Every point passed dailyLow() in toDailyLowsOutput, so dates, amounts and the currency are plain ASCII tokens.
   // They are escaped all the same, so the rendering stays safe should that validation ever change.
@@ -291,7 +298,8 @@ export function dailyLowsMarkdown(out: DailyLowsOutput): string {
   // so it is shown on its own and never counted as the window's lowest, highest or latest.
   const carried = out.points.find((p) => p.is_carried_forward);
   const inWindow = out.points.filter((p) => !p.is_carried_forward);
-  const head = [`Daily lows for ${subject} over the last 30 days: the lowest price observed each day across all retailers, in stock or not (${currency}).`];
+  const since = out.window_start ? `, ${md(out.window_start)} to today (UTC)` : "";
+  const head = [`Daily lows for ${subject}${merged} over the last 30 days${since}: the lowest price observed each day across all retailers, in stock or not (${currency}).`];
   if (dropped > 0) head.push(`${dropped} malformed ${dropped === 1 ? "point was" : "points were"} dropped and ${dropped === 1 ? "is" : "are"} not shown.`);
   const lines: string[] = [];
   if (inWindow.length > 0) {

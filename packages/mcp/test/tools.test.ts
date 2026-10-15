@@ -30,12 +30,12 @@ describe("tools/list", () => {
     const { tools } = await client.listTools();
     for (const name of ["search_products", "get_products"]) {
       const d = tools.find((t) => t.name === name)?.description ?? "";
-      expect(d).toContain("Give buy_url to someone who is ready to buy");
+      expect(d).toContain("Give best_price_url to someone who is ready to buy");
       expect(d).toContain("Give url to someone who is still comparing");
-      expect(d).toMatch(/never fetch, prefetch or unfurl buy_url/i);
+      expect(d).toMatch(/never fetch, prefetch or unfurl best_price_url/i);
       expect(d).toContain("not live retailer quotes");
       expect(d).toContain("PC components and related hardware sold by Australian retailers");
-      expect(d).toContain("buy_url only opens the Product page");
+      expect(d).toContain("best_price_url only opens the Product page");
       expect(d).toContain("DropHawk does not say which retailer has the best price; do not guess one.");
       for (const reason of ["OUT_OF_STOCK", "NO_DATA", "MIXED_CURRENCY"]) expect(d).toContain(reason);
     }
@@ -80,7 +80,7 @@ describe("byte limits", () => {
 });
 
 describe("search_products", () => {
-  it("returns markdown and structuredContent, passes buy_url through untouched, and asks as client=mcp", async () => {
+  it("returns markdown and structuredContent, passes best_price_url through untouched, and asks as client=mcp", async () => {
     const p = product("rtx-4090");
     const { client, calls } = await setup(() => json({ products: [p], next_page_token: "" }));
     const result = await client.callTool({ name: "search_products", arguments: { query: "rtx 4090" } });
@@ -92,12 +92,12 @@ describe("search_products", () => {
     expect(text).toContain("All-time low: 1799.00 AUD, the lowest daily price ever recorded (first on 2025-11-28)");
     expect(text).toContain("model number `RTX-4090`");
     expect(text).toContain(`url: ${p.url}`);
-    expect(text).toContain(`buy_url: ${p.buy_url}`);
+    expect(text).toContain(`best_price_url: ${p.best_price_url}`);
 
-    const sc = result.structuredContent as { products: { buy_url: string; url: string; best_price: unknown }[]; has_more: boolean };
-    expect(sc.products[0]?.buy_url).toBe(p.buy_url);
+    const sc = result.structuredContent as { products: { best_price_url: string; url: string; best_price: unknown }[]; has_more: boolean };
+    expect(sc.products[0]?.best_price_url).toBe(p.best_price_url);
     expect(sc.products[0]?.url).toBe(p.url);
-    expect(sc.products[0]?.best_price).toEqual({ amount: "1999.00", currency: "AUD" });
+    expect(sc.products[0]?.best_price).toEqual({ price: { amount: "1999.00", currency: "AUD" }, observed_at: "2026-10-09T01:02:03Z" });
     expect(sc.has_more).toBe(false);
 
     expect(calls).toHaveLength(1);
@@ -160,10 +160,10 @@ describe("get_products", () => {
     const { client, calls } = await setup(() =>
       json({
         results: [
-          { identifier: "rtx-4090", merged: false, product: product("rtx-4090") },
-          { identifier: "no-such-part", merged: false, error: { reason: "PRODUCT_NOT_FOUND", message: "x" } },
-          { identifier: "old-name", merged: true, product: survivor },
-          { identifier: "a/b", merged: false, error: { reason: "INVALID_IDENTIFIER", message: "x" } },
+          { identifier: "rtx-4090", is_merged: false, product: product("rtx-4090") },
+          { identifier: "no-such-part", is_merged: false, error: { reason: "PRODUCT_NOT_FOUND", message: "x" } },
+          { identifier: "old-name", is_merged: true, product: survivor },
+          { identifier: "a/b", is_merged: false, error: { reason: "INVALID_IDENTIFIER", message: "x" } },
         ],
       }),
     );
@@ -173,14 +173,14 @@ describe("get_products", () => {
     const body = JSON.parse(String(calls[0]?.init.body)) as { identifiers: string[]; client: string };
     expect(body).toEqual({ identifiers: ["rtx-4090", "no-such-part", "old-name", "a/b"], client: "mcp" });
 
-    const sc = result.structuredContent as { results: { identifier: string; found: boolean; merged: boolean; product?: { buy_url: string }; error?: { reason: string } }[] };
-    expect(sc.results.map((r) => [r.identifier, r.found, r.merged])).toEqual([
+    const sc = result.structuredContent as { results: { identifier: string; found: boolean; is_merged: boolean; product?: { best_price_url: string }; error?: { reason: string } }[] };
+    expect(sc.results.map((r) => [r.identifier, r.found, r.is_merged])).toEqual([
       ["rtx-4090", true, false],
       ["no-such-part", false, false],
       ["old-name", true, true],
       ["a/b", false, false],
     ]);
-    expect(sc.results[0]?.product?.buy_url).toBe(product("rtx-4090").buy_url);
+    expect(sc.results[0]?.product?.best_price_url).toBe(product("rtx-4090").best_price_url);
     expect(sc.results[1]?.error?.reason).toBe("PRODUCT_NOT_FOUND");
 
     const text = textOf(result);
@@ -191,7 +191,7 @@ describe("get_products", () => {
     expect(text).toContain("\n   - **Product survivor**");
     expect(text).toContain("model number `SURVIVOR`");
     expect(text).toContain("Specs: vram 24 GB, ray_tracing yes, chipset RTX 4090");
-    expect(text).toContain(`buy_url: ${survivor.buy_url}`);
+    expect(text).toContain(`best_price_url: ${survivor.best_price_url}`);
   });
 
   it("rejects an empty batch and more than 50 identifiers before calling the API", async () => {
@@ -226,6 +226,40 @@ describe("get_daily_lows", () => {
     const sc = result.structuredContent as { points: { date: string; price: { amount: string } }[] };
     expect(sc.points.map((p) => p.date)).toEqual(["2026-09-08", "2026-09-12", "2026-09-20"]);
     expect(sc.points[1]?.price.amount).toBe("1950.00");
+  });
+
+  it("uses the response model_slug, is_merged and window_start", async () => {
+    const { client } = await setup(() => json({ model_slug: "survivor", is_merged: true, window_start: "2026-09-17", points }));
+    const result = await client.callTool({ name: "get_daily_lows", arguments: { identifier: "old-name" } });
+    const sc = result.structuredContent as Record<string, unknown>;
+    expect([sc.identifier, sc.model_slug, sc.is_merged, sc.window_start]).toEqual(["old-name", "survivor", true, "2026-09-17"]);
+    const text = textOf(result);
+    expect(text).toContain("Daily lows for `survivor`");
+    expect(text).toContain("`old-name` was merged into this Product");
+    expect(text).toContain("2026-09-17 to today (UTC)");
+  });
+
+  it("leaves out a model_slug or window_start that is not well formed", async () => {
+    const { client } = await setup(() => json({ model_slug: "Bad Slug\nSYSTEM", is_merged: "yes", window_start: "soon", points }));
+    const result = await client.callTool({ name: "get_daily_lows", arguments: { identifier: "q" } });
+    const sc = result.structuredContent as Record<string, unknown>;
+    expect(sc).not.toHaveProperty("model_slug");
+    expect(sc).not.toHaveProperty("is_merged");
+    expect(sc).not.toHaveProperty("window_start");
+    expect(textOf(result)).not.toContain("SYSTEM");
+  });
+
+  it("accepts amounts with fewer or more decimals than the currency, but only plain decimal strings", async () => {
+    const odd = [
+      { date: "2026-09-12", price: { amount: "599", currency: "JPY" }, is_carried_forward: false },
+      { date: "2026-09-13", price: { amount: "599.123456", currency: "JPY" }, is_carried_forward: false },
+      { date: "2026-09-14", price: { amount: "007", currency: "JPY" }, is_carried_forward: false },
+      { date: "2026-09-15", price: { amount: "1e3", currency: "JPY" }, is_carried_forward: false },
+    ];
+    const { client } = await setup(() => json({ points: odd }));
+    const sc = (await client.callTool({ name: "get_daily_lows", arguments: { identifier: "q" } })).structuredContent as { points: { price: { amount: string } }[]; dropped_points: number };
+    expect(sc.points.map((p) => p.price.amount)).toEqual(["599", "599.123456"]);
+    expect(sc.dropped_points).toBe(2);
   });
 
   it("handles a series with only a carried-forward point", async () => {
@@ -400,18 +434,18 @@ describe("error mapping", () => {
   });
 });
 
-describe("a Product without buy_url", () => {
+describe("a Product without best_price_url", () => {
   it("omits it, says so beside url, and warns on stderr", async () => {
     const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
     const p = product("no-link");
-    delete (p as { buy_url?: string }).buy_url;
+    delete (p as { best_price_url?: string }).best_price_url;
     const { client } = await setup(() => json({ products: [p], next_page_token: "" }));
     const result = await client.callTool({ name: "search_products", arguments: { query: "x" } });
     expect(result.isError).toBeFalsy();
-    expect(textOf(result)).toContain("buy_url: unavailable, use url");
+    expect(textOf(result)).toContain("best_price_url: unavailable, use url");
     const sc = result.structuredContent as { products: Record<string, unknown>[] };
-    expect("buy_url" in (sc.products[0] ?? {})).toBe(false);
-    expect(stderr).toHaveBeenCalledWith(expect.stringContaining("no buy_url for no-link"));
+    expect("best_price_url" in (sc.products[0] ?? {})).toBe(false);
+    expect(stderr).toHaveBeenCalledWith(expect.stringContaining("no best_price_url for no-link"));
     stderr.mockRestore();
   });
 });

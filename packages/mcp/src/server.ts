@@ -23,7 +23,7 @@ import { VERSION } from "./version.js";
 export type Catalogue = Pick<DropHawk, "searchProducts" | "getProducts" | "getDailyLows" | "listComponentTypes" | "listBrands">;
 
 export interface CreateServerOptions {
-  /** The SDK client to use. Defaults to one built from `baseUrl` and `fetch`, attributing buy_url Clicks to MCP. */
+  /** The SDK client to use. Defaults to one built from `baseUrl` and `fetch`, attributing best_price_url Clicks to MCP. */
   catalogue?: Catalogue;
   /** The API origin, for testing. Defaults to https://api.drophawk.net. */
   baseUrl?: string | undefined;
@@ -44,7 +44,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   const catalogue: Catalogue =
     options.catalogue ??
     // `client` is @internal in the SDK and stripped from its .d.ts, so it is passed with a cast.
-    // It makes the API attribute every buy_url Click to this MCP surface (src=mcp).
+    // It makes the API attribute every best_price_url Click to this MCP surface (src=mcp).
     new DropHawk({
       client: "mcp",
       userAgent: `drophawk-mcp/${VERSION}`,

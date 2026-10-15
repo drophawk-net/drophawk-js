@@ -40,7 +40,7 @@ export function errorBody(code: number, message: string, reason: string, metadat
   };
 }
 
-/** The buy_url's query is deliberately awkward: a `+` encoded as %2B must survive untouched. */
+/** The best_price_url's query is deliberately awkward: a `+` encoded as %2B must survive untouched. */
 export function product(slug = "rtx-4090", overrides: Partial<Product> = {}): Product {
   return {
     model_slug: slug,
@@ -51,13 +51,12 @@ export function product(slug = "rtx-4090", overrides: Partial<Product> = {}): Pr
     specs: { vram: { number_value: 24, unit: "GB" }, ray_tracing: { bool_value: true }, chipset: { string_value: "RTX 4090" } },
     images: [{ url: `https://img.drophawk.net/${slug}.webp`, alt_text: "", width: 100, height: 100 }],
     pricing: {
-      best_price: { amount: "1999.00", currency: "AUD" },
-      best_price_observed_at: "2026-10-09T01:02:03Z",
+      best_price: { price: { amount: "1999.00", currency: "AUD" }, observed_at: "2026-10-09T01:02:03Z" },
       in_stock_count: 3,
       all_time_low: { price: { amount: "1799.00", currency: "AUD" }, date: "2025-11-28" },
     },
     url: `https://drophawk.net/p/${slug}`,
-    buy_url: `https://go.drophawk.net/p/${slug}?src=mcp&rep=json&sig=a%2Bb`,
+    best_price_url: `https://go.drophawk.net/p/${slug}?src=mcp&rep=json&sig=a%2Bb`,
     ...overrides,
   } as Product;
 }

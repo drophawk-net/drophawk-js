@@ -25,7 +25,7 @@ export interface DropHawkOptions {
    */
   userAgent?: string;
   /**
-   * @internal For DropHawk's own MCP server, so the `buy_url` it hands out is attributed to that surface.
+   * @internal For DropHawk's own MCP server, so the `best_price_url` it hands out is attributed to that surface.
    *
    * Stripped from the published .d.ts on purpose (`stripInternal`): third-party integrations count as the API surface and must not set it.
    * The MCP package passes it with a cast, which keeps it off the public types without a second entry point:
@@ -121,7 +121,7 @@ export class DropHawk {
   /**
    * Gets a Product's daily lows over the last 30 days.
    * A merged Product is followed transparently.
-   * The response does not name the Product; to learn its canonical `model_slug` call {@link DropHawk.getProduct}.
+   * The response names the Product it belongs to (`model_slug`, the survivor after a merge) and the first day of the window (`window_start`).
    */
   async getDailyLows(identifier: string, options: CallOptions = {}): Promise<DailyLows> {
     return this.#request<DailyLows>("GET", `/v1/products/${segment(identifier)}/daily-lows`, { signal: options.signal });

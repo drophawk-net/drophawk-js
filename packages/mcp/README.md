@@ -57,20 +57,22 @@ Add this to `~/.cursor/mcp.json` (or `.cursor/mcp.json` in a project).
 | `get_daily_lows(identifier)` | Get the last 30 days of daily lows for a Product: the lowest price observed each day across all retailers, in stock or not. |
 
 Every tool answers with compact markdown for the model and the same data as `structuredContent`, described by the tool's `outputSchema`.
+In `structuredContent` a Product's `best_price` is `{ price, observed_at }`, a batch entry says `is_merged`, and daily lows add the Product's `model_slug`, `is_merged` and the `window_start` of the 30-day window when the API sends them.
+Amounts are decimal strings with any number of decimal places (never rounded) and are shown as the API sent them.
 Failures come back as a tool error (`isError: true`) with a short explanation of what to do next, for example how long to wait after `RATE_LIMITED`.
 
 ### Links
 
 Every Product carries two links.
 
-- `buy_url` is for someone who is ready to buy.
+- `best_price_url` is for someone who is ready to buy.
   It is a DropHawk link that resolves to the best price at the moment it is followed, and it never names a retailer.
   Following it is recorded as a click, so an assistant must never fetch, prefetch or unfurl it.
   The server asks the API for it as an MCP surface, so those clicks are attributed to MCP.
 - `url` is for someone who is still comparing.
   It is the Product's page on drophawk.net with the full price comparison and history.
 
-When a Product has no best price, `buy_url` only opens the Product page, so the assistant is told to give `url` instead and to say the Product is out of stock if that is why.
+When a Product has no best price, `best_price_url` only opens the Product page, so the assistant is told to give `url` instead and to say the Product is out of stock if that is why.
 DropHawk never says which retailer has the best price, so the assistant is told not to guess one.
 
 Both are passed through exactly as the API gave them, and only when they are https links on drophawk.net in their exact canonical form; otherwise the answer says the link is unavailable.

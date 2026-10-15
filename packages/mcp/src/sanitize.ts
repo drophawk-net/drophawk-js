@@ -32,7 +32,7 @@ const MARKDOWN = /[\\`*[\]()<>|~#&]/g;
 // "https:\\host" and "https:host" count as separators too, but only after http or https, so "3:/4" is left alone.
 // A host ends at a colon, so a nested separator ("foo://https://evil...") is defanged as well. The parenthesised and "digit full stop" characters U+2488-U+249B and
 // U+1F100-U+1F10A are first rewritten to their compatibility form ("⒈" becomes "1."). Numbers such as "1.5", "2.5GbE"
-// or "v1.2.3.4" are left alone. Real links (url, buy_url, image_url) never pass through here: safeUrl checks them.
+// or "v1.2.3.4" are left alone. Real links (url, best_price_url, image_url) never pass through here: safeUrl checks them.
 //
 // Any other compatibility lookalike (circled, superscript, mathematical letters and digits) is caught by defangText,
 // which falls back to the NFKC form only for text whose normalised form holds a link. Not done, because it would
@@ -261,7 +261,7 @@ const URL_FORBIDDEN = /[()[\]<>"'`\s\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
 /**
  * Returns the URL unchanged if it is an https URL on drophawk.net or one of its subdomains, without credentials or a port,
  * and already in its exact canonical form; otherwise undefined.
- * "Unchanged" matters: buy_url carries a signature and must never be rewritten. Requiring the canonical form means the URL
+ * "Unchanged" matters: best_price_url carries a signature and must never be rewritten. Requiring the canonical form means the URL
  * a client resolves is byte for byte the one checked here: nothing (case, dot segments, a default port, backslashes,
  * non-ASCII) is normalised away between the check and the click.
  */
