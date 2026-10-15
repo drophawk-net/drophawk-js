@@ -56,7 +56,7 @@ The Release workflow has three jobs with separate privileges:
   The job's own `GITHUB_TOKEN` is read only and there is no fallback to it: until the App is configured, the job fails with an error naming what is missing, and no version pull request is opened.
 - `build` installs with `--ignore-scripts`, tests, builds and packs tarballs, and uploads them.
   It has read-only repository access and cannot publish.
-- `publish` runs in the `npm` environment, downloads those tarballs and runs `npm publish` on each through trusted publishing.
+- `publish` runs in the `npm` environment, downloads those tarballs and runs `npm publish` on each through trusted publishing, the SDK before the MCP server, from an empty temporary directory so no `.npmrc` in the repository can configure npm.
   It tags each version as soon as it is on npm, with a step-scoped token, so a run that fails part way leaves what it published tagged.
   Rerunning it, or the whole workflow, publishes only what is missing: a version already on npm with the same tarball integrity is skipped and tagged, and one with different contents fails the job, to be tagged by hand at the commit it was published from.
 
