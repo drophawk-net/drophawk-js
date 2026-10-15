@@ -204,8 +204,11 @@ jobs:
 
           # Text from a tarball or the registry is never put into a workflow command, and output from npm is
           # prefixed so that none of its lines can start one; the legacy "##[command]" form, which also works mid-line,
-          # is broken up as well.
-          quote() { sed -e 's/##\[/# #[/g' -e 's/^/  | /'; }
+          # is broken up as well. The runner also ends a line at a lone CR, so CR, CRLF and the Unicode next-line,
+          # line and paragraph separators are turned into LF first, and every resulting line is prefixed.
+          quote() {
+            tr '\r' '\n' | LC_ALL=C sed -e 's/\xC2\x85/\n/g' -e 's/\xE2\x80\xA8/\n/g' -e 's/\xE2\x80\xA9/\n/g' | LC_ALL=C sed -e 's/##\[/# #[/g' -e 's/^/  | /'
+          }
 
           # Before publishing anything: every tarball must be the SDK or the MCP server, at most one of each, and its
           # package.json must name exactly that package with a plain version that matches the file name.
