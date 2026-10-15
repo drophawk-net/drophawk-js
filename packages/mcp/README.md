@@ -73,7 +73,17 @@ Every Product carries two links.
 When a Product has no best price, `buy_url` only opens the Product page, so the assistant is told to give `url` instead and to say the Product is out of stock if that is why.
 DropHawk never says which retailer has the best price, so the assistant is told not to guess one.
 
-Both are passed through exactly as the API gave them.
+Both are passed through exactly as the API gave them, and only when they are https links on drophawk.net in their exact canonical form; otherwise the answer says the link is unavailable.
+
+### Retailer text
+
+Product names, model numbers, Brand and Spec text come from retailers, so the server treats them as data, never as instructions.
+
+- Each value is flattened to one line, length-capped and markdown-escaped.
+- Web addresses inside it are defanged (`https://evil.example` becomes `https[:]//evil[.]example`), so they are never offered as links.
+- In the markdown, it sits between `BEGIN UNTRUSTED PRODUCT DATA <nonce>` and `END UNTRUSTED PRODUCT DATA <nonce>` lines.
+  The nonce is random for every response, so retailer text cannot forge the end of the block.
+- Daily lows whose date, amount or currency is malformed are dropped, and the answer says how many.
 
 ### What DropHawk does not know
 

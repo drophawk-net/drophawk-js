@@ -303,7 +303,7 @@ describe("get_daily_lows validation", () => {
     const { client } = await setup(() => json({ points: [ok("2026-09-12")] }));
     const text = textOf(await client.callTool({ name: "get_daily_lows", arguments: { identifier: "q" } }));
     const begin = text.indexOf("BEGIN UNTRUSTED PRODUCT DATA");
-    const end = text.indexOf("END UNTRUSTED PRODUCT DATA");
+    const end = text.search(/^END UNTRUSTED PRODUCT DATA [0-9a-f]{32}$/m);
     expect(begin).toBeGreaterThanOrEqual(0);
     expect(begin).toBeLessThan(text.indexOf("Lowest 1950.00"));
     expect(text.indexOf("- 2026-09-12: 1950.00")).toBeLessThan(end);

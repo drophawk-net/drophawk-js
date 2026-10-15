@@ -14,6 +14,22 @@ const MAX_URL_LENGTH = 2048;
 const CONTROL = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu;
 const MARKDOWN = /[\\`*[\]()<>|~#]/g;
 
+// Link-looking text in free-text fields is defanged so a model reads it as text and never offers it as a link.
+// One scheme throughout:
+//   - the separator after any URL scheme becomes "[:]//"       https://evil.example/pay -> https[:]//evil[.]example/pay
+//   - every dot in a host name becomes "[.]", both after a scheme and in bare domain names (a run of labels ending in an
+//     alphabetic top-level label)                             www.evil.example -> www[.]evil[.]example, a@evil.example -> a@evil[.]example
+// Numbers such as "1.5" or "2.5GbE" are left alone: the last label of a domain must be letters only.
+// Real links (url, buy_url, image_url) never pass through here: they are checked by safeUrl and copied verbatim.
+const SCHEME_URL = /\b([a-z][a-z0-9+.-]*):\/\/([^\s/?#]*)/giu;
+const BARE_DOMAIN = /(?<![\p{L}\p{N}.-])(?:[\p{L}\p{N}](?:[\p{L}\p{N}-]*[\p{L}\p{N}])?\.)+\p{L}{2,63}(?![\p{L}\p{N}-])/gu;
+
+function defang(text: string): string {
+  return text
+    .replace(SCHEME_URL, (_, scheme: string, host: string) => `${scheme}[:]//${host.replace(/\./g, "[.]")}`)
+    .replace(BARE_DOMAIN, (domain) => domain.replace(/\./g, "[.]"));
+}
+
 export interface CleanOptions {
   /** Escape markdown-significant characters, for text rendered into markdown. */
   markdown?: boolean;
@@ -21,11 +37,11 @@ export interface CleanOptions {
   max?: number;
 }
 
-/** Flattens an untrusted value to one short line of text. Never throws. */
+/** Flattens an untrusted value to one short line of text with link-looking text defanged. Never throws. */
 export function cleanText(value: unknown, options: CleanOptions = {}): string {
   if (value === undefined || value === null) return "";
   const raw = typeof value === "string" ? value : typeof value === "number" || typeof value === "boolean" ? String(value) : "";
-  const flat = raw.replace(CONTROL, " ").replace(/ {2,}/g, " ").trim();
+  const flat = defang(raw.replace(CONTROL, " ").replace(/ {2,}/g, " ").trim());
   const max = options.max ?? MAX_TEXT_LENGTH;
   const chars = Array.from(flat);
   const capped = chars.length > max ? `${chars.slice(0, max - 3).join("").trimEnd()}...` : flat;
