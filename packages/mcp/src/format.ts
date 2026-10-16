@@ -138,7 +138,9 @@ function notFound(id: string, reason: string): BatchOutput["results"][number] {
 export function toDailyLowsOutput(asked: string, lows: DailyLows): DailyLowsOutput {
   const points: DailyLowsOutput["points"] = [];
   let dropped = 0;
-  for (const p of (Array.isArray(lows.points) ? lows.points : []) as unknown[]) {
+  // A withheld series is not shown, whatever points came with it: any present reason wins, as for best_price.
+  const withheld = withheldReason(lows.withheld_reason);
+  for (const p of (withheld !== undefined ? [] : Array.isArray(lows.points) ? lows.points : []) as unknown[]) {
     const point = dailyLow(p);
     // The API withholds a mixed-currency series, so a point in another currency than the first is malformed too.
     if (point && (points.length === 0 || point.price.currency === points[0]!.price.currency)) points.push(point);
@@ -153,7 +155,7 @@ export function toDailyLowsOutput(asked: string, lows: DailyLows): DailyLowsOutp
     ...(isCalendarDate(lows.window_start) ? { window_start: lows.window_start } : {}),
     points,
     ...(dropped > 0 ? { dropped_points: dropped } : {}),
-    ...(withheldReason(lows.withheld_reason) ? { withheld_reason: withheldReason(lows.withheld_reason) } : {}),
+    ...(withheld !== undefined ? { withheld_reason: withheld } : {}),
   };
 }
 

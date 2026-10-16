@@ -231,6 +231,39 @@ describe("get_daily_lows", () => {
     expect(sc.points[1]?.price.amount).toBe("1950.00");
   });
 
+  it.each([[""], ["  "], [false], [5], ["lower case"]])("suppresses the series when withheld_reason is the present but malformed %j", async (reason) => {
+    const { client } = await setup(() => json({ points, withheld_reason: reason }));
+    const result = await client.callTool({ name: "get_daily_lows", arguments: { identifier: "rtx-4090" } });
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as { points: unknown[]; withheld_reason?: string };
+    expect(sc.points).toEqual([]);
+    expect(sc.withheld_reason).toBe("UNKNOWN");
+    const text = textOf(result);
+    expect(text).toContain("the series is unknown (UNKNOWN)");
+    expect(text).not.toMatch(/1950\.00|2050\.00|2100\.00|Lowest/);
+  });
+
+  it("suppresses the series when a real withheld_reason arrives beside points", async () => {
+    const { client } = await setup(() => json({ points, withheld_reason: "MIXED_CURRENCY" }));
+    const result = await client.callTool({ name: "get_daily_lows", arguments: { identifier: "rtx-4090" } });
+    const sc = result.structuredContent as { points: unknown[]; withheld_reason?: string; dropped_points?: number };
+    expect(sc.points).toEqual([]);
+    expect(sc.withheld_reason).toBe("MIXED_CURRENCY");
+    expect(sc).not.toHaveProperty("dropped_points");
+    const text = textOf(result);
+    expect(text).toContain("its prices span more than one currency");
+    expect(text).not.toMatch(/1950\.00|2050\.00|2100\.00|Lowest/);
+  });
+
+  it("keeps the series when withheld_reason is null or absent", async () => {
+    const { client } = await setup(() => json({ points, withheld_reason: null }));
+    const result = await client.callTool({ name: "get_daily_lows", arguments: { identifier: "rtx-4090" } });
+    const sc = result.structuredContent as { points: unknown[]; withheld_reason?: string };
+    expect(sc.points).toHaveLength(3);
+    expect(sc).not.toHaveProperty("withheld_reason");
+    expect(textOf(result)).toContain("Lowest 1950.00");
+  });
+
   it("uses the response model_slug, is_merged and window_start", async () => {
     const { client } = await setup(() => json({ model_slug: "survivor", is_merged: true, window_start: "2026-09-17", points }));
     const result = await client.callTool({ name: "get_daily_lows", arguments: { identifier: "old-name" } });
