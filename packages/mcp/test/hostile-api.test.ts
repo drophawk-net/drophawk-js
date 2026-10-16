@@ -558,7 +558,7 @@ describe("strict booleans and prices", () => {
   it("keeps well-formed prices and timestamps", async () => {
     const c = await setup(() => json({ products: [product("p")], next_page_token: "" }));
     const sc = ((await c.client.callTool({ name: "search_products", arguments: { query: "x" } })).structuredContent as { products: Record<string, unknown>[] }).products[0]!;
-    expect(sc.best_price).toEqual({ price: { amount: "1999.00", currency: "AUD" }, observed_at: "2026-10-09T01:02:03Z" });
+    expect(sc.best_price).toEqual({ price: { amount: "1999.00", currency: "AUD" }, observed_at: "2026-10-09T01:02:03Z", retailer: { slug: "pccasegear", name: "PC Case Gear" } });
     expect(sc.all_time_low).toEqual({ amount: "1799.00", currency: "AUD", date: "2025-11-28" });
   });
 });

@@ -29,7 +29,8 @@ const LINK_RULES =
   "Every Product has two links. Give best_price_url to someone who is ready to buy: it is a DropHawk link that resolves to the best price at the moment it is followed. " +
   "Give url to someone who is still comparing: it is the Product's page with the full price comparison and history. " +
   "When best_price is withheld, best_price_url only opens the Product page, so give url instead, and for OUT_OF_STOCK say the Product is out of stock rather than offering to buy it. " +
-  "DropHawk does not say which retailer has the best price; do not guess one. " +
+  "best_price.retailer names the retailer offering best_price as of observed_at, so present it as \"at last check\". " +
+  "No other retailer is named, so do not guess others. best_price_url resolves when followed and may now go to a different retailer. " +
   "Pass either link exactly as given and never rewrite it. Never fetch, prefetch or unfurl best_price_url, because following it counts as a visit to a retailer.";
 
 export const INSTRUCTIONS = [

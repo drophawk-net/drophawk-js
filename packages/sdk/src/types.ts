@@ -27,6 +27,10 @@ export type SpecValue = (
   };
 export type BrandRef = Schemas["BrandRef"];
 export type ComponentTypeRef = Schemas["ComponentTypeRef"];
+/** The Retailer offering a BestPrice as of its `observed_at`: the only Retailer the API ever names. */
+export type RetailerRef = Schemas["RetailerRef"];
+/** A Product's lowest current in-stock price, when it was observed and the Retailer offering it. */
+export type BestPrice = Schemas["BestPrice"];
 /**
  * An amount in one currency.
  * `amount` is a non-negative decimal string with any number of decimal places (usually the currency's minor units, never rounded), so parse it with a decimal type and never reject it for its decimals.

@@ -32,6 +32,10 @@ export const productSchema = z.object({
     .object({
       price: moneySchema,
       observed_at: z.string().optional().describe("RFC 3339 time the price was last observed. Absent only if the API sent a malformed time."),
+      retailer: z
+        .object({ slug: z.string().max(256).regex(SLUG), name: z.string() })
+        .optional()
+        .describe("the Retailer offering best_price as of observed_at. The only Retailer ever named. Absent only if the API sent a malformed one."),
     })
     .optional()
     .describe("Lowest in-stock price last observed, and when. Absent when withheld; see best_price_withheld_reason."),

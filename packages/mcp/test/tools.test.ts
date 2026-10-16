@@ -36,7 +36,10 @@ describe("tools/list", () => {
       expect(d).toContain("not live retailer quotes");
       expect(d).toContain("PC components and related hardware sold by Australian retailers");
       expect(d).toContain("best_price_url only opens the Product page");
-      expect(d).toContain("DropHawk does not say which retailer has the best price; do not guess one.");
+      expect(d).toContain("best_price.retailer names the retailer offering best_price as of observed_at");
+      expect(d).toContain('present it as "at last check"');
+      expect(d).toContain("No other retailer is named, so do not guess others.");
+      expect(d).toContain("best_price_url resolves when followed and may now go to a different retailer.");
       for (const reason of ["OUT_OF_STOCK", "NO_DATA", "MIXED_CURRENCY"]) expect(d).toContain(reason);
     }
     const lows = tools.find((t) => t.name === "get_daily_lows")?.description ?? "";
@@ -97,7 +100,7 @@ describe("search_products", () => {
     const sc = result.structuredContent as { products: { best_price_url: string; url: string; best_price: unknown }[]; has_more: boolean };
     expect(sc.products[0]?.best_price_url).toBe(p.best_price_url);
     expect(sc.products[0]?.url).toBe(p.url);
-    expect(sc.products[0]?.best_price).toEqual({ price: { amount: "1999.00", currency: "AUD" }, observed_at: "2026-10-09T01:02:03Z" });
+    expect(sc.products[0]?.best_price).toEqual({ price: { amount: "1999.00", currency: "AUD" }, observed_at: "2026-10-09T01:02:03Z", retailer: { slug: "pccasegear", name: "PC Case Gear" } });
     expect(sc.has_more).toBe(false);
 
     expect(calls).toHaveLength(1);

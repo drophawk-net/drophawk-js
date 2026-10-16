@@ -263,7 +263,7 @@ describe("types", () => {
   });
 
   it("best_price is a nested price and observation time, and Money keeps any decimals", () => {
-    const best = product("x", { pricing: { best_price: { price: { amount: "599", currency: "JPY" }, observed_at: "2026-10-16T01:00:00Z" }, in_stock_count: 1 } }).pricing.best_price;
+    const best = product("x", { pricing: { best_price: { price: { amount: "599", currency: "JPY" }, observed_at: "2026-10-16T01:00:00Z", retailer: { slug: "pccasegear", name: "PC Case Gear" } }, in_stock_count: 1 } }).pricing.best_price;
     expect(best?.price.amount).toBe("599");
     expect(best?.observed_at).toBe("2026-10-16T01:00:00Z");
   });

@@ -24,7 +24,7 @@ describe("server instructions", () => {
       expect(instructions).toBe(INSTRUCTIONS);
       expect(instructions).toContain(CATALOGUE_LIMITS);
       expect(instructions).toContain("Give best_price_url to someone who is ready to buy");
-      expect(instructions).toContain("do not guess one");
+      expect(instructions).toContain("do not guess others");
       for (const reason of ["OUT_OF_STOCK", "NO_DATA", "MIXED_CURRENCY"]) expect(instructions).toContain(reason);
       expect(instructions).not.toContain(String.fromCharCode(0x2014));
     } finally {

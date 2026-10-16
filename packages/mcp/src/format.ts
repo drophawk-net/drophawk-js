@@ -49,11 +49,25 @@ type Pricing = Product["pricing"];
  * is left out rather than coerced; a malformed best price with no reason given is reported as withheld for an UNKNOWN reason.
  */
 function bestPrice(pricing: Pricing): Pick<ProductOutput, "best_price" | "best_price_withheld_reason"> {
-  const best: { price?: unknown; observed_at?: unknown } | null | undefined = pricing.best_price;
+  const best: { price?: unknown; observed_at?: unknown; retailer?: unknown } | null | undefined = pricing.best_price;
   const price = best === undefined || best === null ? undefined : money(best.price);
   const observed = typeof best?.observed_at === "string" && isTimestamp(best.observed_at) ? best.observed_at : undefined;
+  const retailer = price ? retailerRef(best?.retailer) : undefined;
   const reason = pricing.best_price_withheld_reason ? (reasonCode(pricing.best_price_withheld_reason) ?? UNKNOWN) : price === undefined && best !== undefined && best !== null ? UNKNOWN : undefined;
-  return { ...(price ? { best_price: { price, ...(observed ? { observed_at: observed } : {}) } } : {}), ...(reason ? { best_price_withheld_reason: reason } : {}) };
+  return { ...(price ? { best_price: { price, ...(observed ? { observed_at: observed } : {}), ...(retailer ? { retailer } : {}) } } : {}), ...(reason ? { best_price_withheld_reason: reason } : {}) };
+}
+
+/**
+ * The Retailer offering the best price, or undefined unless the slug matches the spec's pattern and the name is text.
+ * The name is Retailer-sourced free text, so it goes through cleanText like every other free text and is only ever shown inside the untrusted block.
+ */
+function retailerRef(value: unknown): { slug: string; name: string } | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const { slug, name } = value as { slug?: unknown; name?: unknown };
+  const id = validSlug(slug);
+  if (id === undefined || typeof name !== "string") return undefined;
+  const clean = cleanText(name);
+  return clean === "" ? undefined : { slug: id, name: clean };
 }
 
 /** The all-time low, or its withheld reason; a malformed one is left out and reported as withheld for an UNKNOWN reason. */
@@ -209,7 +223,9 @@ function bestPriceLine(p: ProductOutput): string {
   if (p.best_price) {
     const observed = p.best_price.observed_at ? `, last observed ${md(p.best_price.observed_at)}` : "";
     const where = p.in_stock_count === undefined ? "in stock" : `in stock at ${p.in_stock_count} ${p.in_stock_count === 1 ? "retailer" : "retailers"}`;
-    return `Best price: ${fmt(p.best_price.price)} (${where}${observed})`;
+    const at = p.best_price.retailer ? ` at ${md(p.best_price.retailer.name)}` : "";
+    const check = p.best_price.retailer ? "at last check; " : "";
+    return `Best price: ${fmt(p.best_price.price)}${at} (${check}${where}${observed})`;
   }
   switch (p.best_price_withheld_reason) {
     case "OUT_OF_STOCK":
@@ -251,7 +267,7 @@ function bestPriceUrlLine(p: ProductOutput): string {
   const buy = safeUrl(p.best_price_url);
   if (!buy) return p.url === UNAVAILABLE ? "best_price_url: unavailable" : "best_price_url: unavailable, use url";
   if (!p.best_price) return `best_price_url: ${buy} (no best price right now, so this only opens the Product page; give url instead)`;
-  return `best_price_url: ${buy}`;
+  return `best_price_url: ${buy} (goes to the current best price, which may be a different retailer now)`;
 }
 
 /** One Product as a markdown list item; `full` adds specs. `url` is always listed; `best_price_url` is listed as given, or as an unavailable notice when the API omitted it. */
