@@ -75,7 +75,7 @@ Every Product carries two links.
 When a Product has no best price, `best_price_url` only opens the Product page, so the assistant is told to give `url` instead and to say the Product is out of stock if that is why.
 `best_price` names the one retailer offering it as of `observed_at`, and the assistant presents it as "at last check".
 No other retailer is ever named, so the assistant is told not to guess others.
-The retailer's name is text from the retailer, so it is cleaned like other free text and shown only inside the untrusted block; a retailer with a malformed slug is left out.
+The retailer's name is text from the retailer, so it is cleaned like other free text and shown only inside the untrusted block; a malformed retailer is left out.
 
 Both are passed through exactly as the API gave them, and only when they are https links on drophawk.net in their exact canonical form; otherwise the answer says the link is unavailable.
 

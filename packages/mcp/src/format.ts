@@ -50,10 +50,12 @@ type Pricing = Product["pricing"];
  */
 function bestPrice(pricing: Pricing): Pick<ProductOutput, "best_price" | "best_price_withheld_reason"> {
   const best: { price?: unknown; observed_at?: unknown; retailer?: unknown } | null | undefined = pricing.best_price;
-  const price = best === undefined || best === null ? undefined : money(best.price);
+  // The spec leaves best_price absent when it is withheld, so a reason wins over any price sent beside it.
+  const withheld = pricing.best_price_withheld_reason ? (reasonCode(pricing.best_price_withheld_reason) ?? UNKNOWN) : undefined;
+  const price = withheld !== undefined || best === undefined || best === null ? undefined : money(best.price);
   const observed = typeof best?.observed_at === "string" && isTimestamp(best.observed_at) ? best.observed_at : undefined;
   const retailer = price ? retailerRef(best?.retailer) : undefined;
-  const reason = pricing.best_price_withheld_reason ? (reasonCode(pricing.best_price_withheld_reason) ?? UNKNOWN) : price === undefined && best !== undefined && best !== null ? UNKNOWN : undefined;
+  const reason = withheld ?? (price === undefined && best !== undefined && best !== null ? UNKNOWN : undefined);
   return { ...(price ? { best_price: { price, ...(observed ? { observed_at: observed } : {}), ...(retailer ? { retailer } : {}) } } : {}), ...(reason ? { best_price_withheld_reason: reason } : {}) };
 }
 
@@ -65,9 +67,12 @@ function retailerRef(value: unknown): { slug: string; name: string } | undefined
   if (typeof value !== "object" || value === null) return undefined;
   const { slug, name } = value as { slug?: unknown; name?: unknown };
   const id = validSlug(slug);
-  if (id === undefined || typeof name !== "string") return undefined;
-  const clean = cleanText(name);
-  return clean === "" ? undefined : { slug: id, name: clean };
+  const clean = typeof name === "string" ? cleanText(name) : "";
+  if (id === undefined || clean === "") {
+    console.error("drophawk-mcp: the API sent a malformed retailer for best_price (invalid slug or empty name); it is left out");
+    return undefined;
+  }
+  return { slug: id, name: clean };
 }
 
 /** The all-time low, or its withheld reason; a malformed one is left out and reported as withheld for an UNKNOWN reason. */
@@ -267,7 +272,7 @@ function bestPriceUrlLine(p: ProductOutput): string {
   const buy = safeUrl(p.best_price_url);
   if (!buy) return p.url === UNAVAILABLE ? "best_price_url: unavailable" : "best_price_url: unavailable, use url";
   if (!p.best_price) return `best_price_url: ${buy} (no best price right now, so this only opens the Product page; give url instead)`;
-  return `best_price_url: ${buy} (goes to the current best price, which may be a different retailer now)`;
+  return `best_price_url: ${buy}`;
 }
 
 /** One Product as a markdown list item; `full` adds specs. `url` is always listed; `best_price_url` is listed as given, or as an unavailable notice when the API omitted it. */
