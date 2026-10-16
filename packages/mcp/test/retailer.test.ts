@@ -57,6 +57,27 @@ describe("best price Retailer", () => {
     expect(JSON.stringify(sc)).not.toContain("PC Case Gear");
   });
 
+  it.each([[""], ["  "], ["\n"], ["lower case"], [5], [false], [{}]])("treats the present withheld reason %j as UNKNOWN and suppresses best_price and its Retailer", async (reason) => {
+    const { text, sc } = await search(withRetailer({ slug: "pccasegear", name: "PC Case Gear" }, { best_price_withheld_reason: reason }));
+    expect(sc).not.toHaveProperty("best_price");
+    expect((sc as Record<string, unknown>).best_price_withheld_reason).toBe("UNKNOWN");
+    expect(text).not.toContain("PC Case Gear");
+    expect(text).not.toContain("849.00");
+  });
+
+  it.each([[""], ["  "], [5], [false]])("treats the present all-time-low withheld reason %j as UNKNOWN and suppresses all_time_low", async (reason) => {
+    const { sc } = await search(withRetailer({ slug: "pccasegear", name: "PC Case Gear" }, { all_time_low: { price: { amount: "799.00", currency: "AUD" }, date: "2025-11-28" }, all_time_low_withheld_reason: reason }));
+    expect(sc).not.toHaveProperty("all_time_low");
+    expect((sc as Record<string, unknown>).all_time_low_withheld_reason).toBe("UNKNOWN");
+    expect(sc.best_price).toBeDefined();
+  });
+
+  it("treats a null withheld reason as absent", async () => {
+    const { sc } = await search(withRetailer({ slug: "pccasegear", name: "PC Case Gear" }, { best_price_withheld_reason: null, all_time_low_withheld_reason: null }));
+    expect(sc.best_price?.retailer).toEqual({ slug: "pccasegear", name: "PC Case Gear" });
+    expect(sc).not.toHaveProperty("best_price_withheld_reason");
+  });
+
   it("is absent when the best price is withheld and none was sent", async () => {
     const { text, sc } = await search(product("p", { pricing: { in_stock_count: 0, best_price_withheld_reason: "OUT_OF_STOCK" } as never }));
     expect(sc).not.toHaveProperty("best_price");

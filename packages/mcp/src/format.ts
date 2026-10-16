@@ -51,7 +51,7 @@ type Pricing = Product["pricing"];
 function bestPrice(pricing: Pricing): Pick<ProductOutput, "best_price" | "best_price_withheld_reason"> {
   const best: { price?: unknown; observed_at?: unknown; retailer?: unknown } | null | undefined = pricing.best_price;
   // The spec leaves best_price absent when it is withheld, so a reason wins over any price sent beside it.
-  const withheld = pricing.best_price_withheld_reason ? (reasonCode(pricing.best_price_withheld_reason) ?? UNKNOWN) : undefined;
+  const withheld = withheldReason(pricing.best_price_withheld_reason);
   const price = withheld !== undefined || best === undefined || best === null ? undefined : money(best.price);
   const observed = typeof best?.observed_at === "string" && isTimestamp(best.observed_at) ? best.observed_at : undefined;
   const retailer = price ? retailerRef(best?.retailer) : undefined;
@@ -75,12 +75,18 @@ function retailerRef(value: unknown): { slug: string; name: string } | undefined
   return { slug: id, name: clean };
 }
 
+/** Any withheld reason the API sent (even "" or a non-string) is a reason: a code when well formed, otherwise UNKNOWN. Only undefined and null mean none. */
+function withheldReason(value: unknown): string | undefined {
+  return value === undefined || value === null ? undefined : (reasonCode(value) ?? UNKNOWN);
+}
+
 /** The all-time low, or its withheld reason; a malformed one is left out and reported as withheld for an UNKNOWN reason. */
 function allTimeLow(pricing: Pricing): Pick<ProductOutput, "all_time_low" | "all_time_low_withheld_reason"> {
   const low = pricing.all_time_low;
-  const price = low === undefined || low === null ? undefined : money(low.price);
+  const withheld = withheldReason(pricing.all_time_low_withheld_reason);
+  const price = withheld !== undefined || low === undefined || low === null ? undefined : money(low.price);
   const valid = price !== undefined && isCalendarDate(low?.date) ? { ...price, date: low!.date } : undefined;
-  const reason = pricing.all_time_low_withheld_reason ? (reasonCode(pricing.all_time_low_withheld_reason) ?? UNKNOWN) : !valid && low !== undefined ? UNKNOWN : undefined;
+  const reason = withheld ?? (!valid && low !== undefined ? UNKNOWN : undefined);
   return { ...(valid ? { all_time_low: valid } : {}), ...(reason ? { all_time_low_withheld_reason: reason } : {}) };
 }
 
@@ -147,7 +153,7 @@ export function toDailyLowsOutput(asked: string, lows: DailyLows): DailyLowsOutp
     ...(isCalendarDate(lows.window_start) ? { window_start: lows.window_start } : {}),
     points,
     ...(dropped > 0 ? { dropped_points: dropped } : {}),
-    ...(lows.withheld_reason ? { withheld_reason: reasonCode(lows.withheld_reason) ?? UNKNOWN } : {}),
+    ...(withheldReason(lows.withheld_reason) ? { withheld_reason: withheldReason(lows.withheld_reason) } : {}),
   };
 }
 
