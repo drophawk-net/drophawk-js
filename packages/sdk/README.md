@@ -75,7 +75,7 @@ A model number containing `/`, and the identifiers `.` and `..`, cannot travel i
 When a Product was found to duplicate another, the API redirects to the survivor.
 The SDK follows that redirect for you, so `getProduct` returns the surviving Product: store its `model_slug`.
 To find out whether an identifier you stored is stale, compare it with `(await dh.getProduct(identifier)).model_slug`.
-`getDailyLows` follows the redirect too and its response names the Product it belongs to in `model_slug`, so store that, and `window_start` is the first UTC date of its 30-day window.
+`getDailyLows` follows the redirect too and its response names the Product it belongs to in `model_slug`, so store that, and `window_start` is the first UTC date of its 14-day window.
 In a batch there is no redirect: the result has `is_merged: true` and `product` is the survivor, which is the signal to rely on.
 The batch request is sent with `redirect: "manual"`, so its body is never resent elsewhere, and a redirect in answer to it is `INVALID_RESPONSE`.
 Any request whose final URL is on another origin than `baseUrl` is `INVALID_RESPONSE` too.

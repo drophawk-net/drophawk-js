@@ -34,7 +34,7 @@ const LINK_RULES =
   "Pass either link exactly as given and never rewrite it. Never fetch, prefetch or unfurl best_price_url, because following it counts as a visit to a retailer.";
 
 export const INSTRUCTIONS = [
-  "DropHawk tracks prices for PC components sold by Australian retailers. Use search_products to find a Product, get_products for known Products and get_daily_lows for the last 30 days of price movement. The drophawk://component-types and drophawk://brands resources list what is covered.",
+  "DropHawk tracks prices for PC components sold by Australian retailers. Use search_products to find a Product, get_products for known Products and get_daily_lows for recent price movement. The drophawk://component-types and drophawk://brands resources list what is covered.",
   DATA_RULE,
   "",
   "Links:",
@@ -75,7 +75,7 @@ export const GET_PRODUCTS_DESCRIPTION = [
 ].join(" ");
 
 export const DAILY_LOWS_DESCRIPTION = [
-  "Get a Product's daily low prices over the last 30 days, oldest first, to show whether now is a good time to buy or how the price has moved.",
+  "Get a Product's recent daily low prices, oldest first, to show whether now is a good time to buy or how the price has moved.",
   "Each day is the lowest price observed across all of the Product's retailers, whether or not the retailer had stock, so it is not a history of the best price and may be lower than what can be bought today.",
   "The series is withheld when the Product has no history (NO_DATA) or its prices span more than one currency (MIXED_CURRENCY), and the answer says which.",
   DATA_RULE,

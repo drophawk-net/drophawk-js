@@ -555,7 +555,7 @@
           "window_start": {
             "type": "string",
             "format": "date",
-            "description": "The first UTC date of the 30-day window."
+            "description": "The first UTC date of the 14-day window."
           }
         },
         "required": [
@@ -564,7 +564,7 @@
           "is_merged",
           "window_start"
         ],
-        "description": "GetProductDailyLowsResponse is a Product's daily lows over the last 30 days."
+        "description": "GetProductDailyLowsResponse is a Product's daily lows over the last 14 days."
       },
       "ListBrandsResponse": {
         "type": "object",
@@ -1112,8 +1112,8 @@
         "tags": [
           "Products"
         ],
-        "summary": "Get a Product's daily lows over the last 30 days.",
-        "description": "A daily low is the lowest price seen on one UTC day across all Retailers, in stock or not, so it is not a history of best_price. Days with no observation have no point.\n\nThe window is today (UTC) and the 29 days before, starting at window_start. If an earlier point exists, the latest one is included with is_carried_forward set, so a chart can start at the window's first day. Identifiers and merges are handled as in GET /v1/products/{identifier}.",
+        "summary": "Get a Product's daily lows over the last 14 days.",
+        "description": "A daily low is the lowest price seen on one UTC day across all Retailers, in stock or not, so it is not a history of best_price. Days with no observation have no point.\n\nThe window is today (UTC) and the 13 days before, starting at window_start. If an earlier point exists, the latest one is included with is_carried_forward set, so a chart can start at the window's first day. Identifiers and merges are handled as in GET /v1/products/{identifier}.",
         "operationId": "getProductDailyLows",
         "parameters": [
           {

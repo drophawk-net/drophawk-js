@@ -74,13 +74,13 @@ export const dailyLowsOutputSchema = z.object({
   identifier: z.string().describe("The identifier exactly as it was asked for."),
   model_slug: z.string().max(256).regex(SLUG).optional().describe("The Product the series belongs to; after a merge, the survivor. Store this rather than identifier."),
   is_merged: z.boolean().optional().describe("True when identifier named a Product that DropHawk merged into model_slug."),
-  window_start: z.string().optional().describe("The first UTC day of the 30-day window, YYYY-MM-DD. The carried-forward point, if any, is dated before it."),
+  window_start: z.string().optional().describe("The first UTC day of the window, YYYY-MM-DD. The carried-forward point, if any, is dated before it."),
   points: z
     .array(
       z.object({
         date: z.string().describe("UTC calendar day, YYYY-MM-DD."),
         price: moneySchema,
-        is_carried_forward: z.boolean().describe("True for the one point before the 30-day window: the price in force when the window opened."),
+        is_carried_forward: z.boolean().describe("True for the one point before the window: the price in force when the window opened."),
       }),
     )
     .describe("Oldest first. Empty when withheld."),

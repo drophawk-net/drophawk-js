@@ -119,7 +119,7 @@ export class DropHawk {
   }
 
   /**
-   * Gets a Product's daily lows over the last 30 days.
+   * Gets a Product's daily lows over the last 14 days.
    * A merged Product is followed transparently.
    * The response names the Product it belongs to (`model_slug`, the survivor after a merge) and the first day of the window (`window_start`).
    */

@@ -344,12 +344,12 @@ export function dailyLowsMarkdown(out: DailyLowsOutput): string {
   // Every point passed dailyLow() in toDailyLowsOutput, so dates, amounts and the currency are plain ASCII tokens.
   // They are escaped all the same, so the rendering stays safe should that validation ever change.
   const currency = md(out.points[0]!.price.currency);
-  // The carried-forward point predates the 30-day window: it is the price in force when the window opened,
+  // The carried-forward point predates the window: it is the price in force when the window opened,
   // so it is shown on its own and never counted as the window's lowest, highest or latest.
   const carried = out.points.find((p) => p.is_carried_forward);
   const inWindow = out.points.filter((p) => !p.is_carried_forward);
   const since = out.window_start ? `, ${md(out.window_start)} to today (UTC)` : "";
-  const head = [`Daily lows for ${subject}${merged} over the last 30 days${since}: the lowest price observed each day across all retailers, in stock or not (${currency}).`];
+  const head = [`Daily lows for ${subject}${merged} over its recent window${since}: the lowest price observed each day across all retailers, in stock or not (${currency}).`];
   if (dropped > 0) head.push(`${dropped} malformed ${dropped === 1 ? "point was" : "points were"} dropped and ${dropped === 1 ? "is" : "are"} not shown.`);
   const lines: string[] = [];
   if (inWindow.length > 0) {
