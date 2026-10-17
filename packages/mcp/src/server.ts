@@ -110,13 +110,13 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   server.registerTool(
     "get_daily_lows",
     {
-      title: "Get a PC component's 30-day price lows",
+      title: "Get a PC component's 14-day price lows",
       description: DAILY_LOWS_DESCRIPTION,
       inputSchema: z.object({
         identifier: utf8Text(256, z.string()).describe("The Product's model_slug or raw model number. At most 256 UTF-8 bytes."),
       }),
       outputSchema: dailyLowsOutputSchema,
-      annotations: { title: "Get a PC component's 30-day price lows", ...READ_ONLY },
+      annotations: { title: "Get a PC component's 14-day price lows", ...READ_ONLY },
     },
     async ({ identifier }, ctx) => {
       try {

@@ -44,6 +44,12 @@ describe("tools/list", () => {
     }
     const lows = tools.find((t) => t.name === "get_daily_lows")?.description ?? "";
     expect(lows).toMatch(/whether or not the retailer had stock/);
+    expect(lows).not.toMatch(/\b\d+[- ]days?\b/);
+    const lowsTool = tools.find((t) => t.name === "get_daily_lows");
+    expect(lowsTool?.title).toBe("Get a PC component's 14-day price lows");
+    expect(lowsTool?.annotations?.title).toBe("Get a PC component's 14-day price lows");
+    expect(JSON.stringify(lowsTool?.outputSchema)).not.toMatch(/\b\d+-day\b/);
+    expect(client.getInstructions()).not.toMatch(/\b\d+[- ]days?\b/);
     expect(tools.find((t) => t.name === "search_products")?.description).toContain("raise limit (up to 50) or narrow the query");
     for (const t of tools) expect(JSON.stringify(t)).not.toContain(String.fromCharCode(0x2014));
   });
@@ -273,6 +279,7 @@ describe("get_daily_lows", () => {
     expect(text).toContain("Daily lows for `survivor`");
     expect(text).toContain("`old-name` was merged into this Product");
     expect(text).toContain("2026-09-17 to today (UTC)");
+    expect(text).not.toMatch(/\b\d+[- ]days?\b/);
   });
 
   it("leaves out a model_slug or window_start that is not well formed", async () => {

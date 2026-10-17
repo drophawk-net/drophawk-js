@@ -118,10 +118,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get a Product's daily lows over the last 30 days.
+         * Get a Product's daily lows over the last 14 days.
          * @description A daily low is the lowest price seen on one UTC day across all Retailers, in stock or not, so it is not a history of best_price. Days with no observation have no point.
          *
-         *     The window is today (UTC) and the 29 days before, starting at window_start. If an earlier point exists, the latest one is included with is_carried_forward set, so a chart can start at the window's first day. Identifiers and merges are handled as in GET /v1/products/{identifier}.
+         *     The window is today (UTC) and the 13 days before, starting at window_start. If an earlier point exists, the latest one is included with is_carried_forward set, so a chart can start at the window's first day. Identifiers and merges are handled as in GET /v1/products/{identifier}.
          */
         get: operations["getProductDailyLows"];
         put?: never;
@@ -277,7 +277,7 @@ export interface components {
             /** @description The reason, in UPPER_SNAKE_CASE. Treat an unrecognised reason by its HTTP status. */
             reason: "PRODUCT_NOT_FOUND" | "INVALID_IDENTIFIER" | "INVALID_QUERY" | "INVALID_PAGE_TOKEN" | "INVALID_PAGE_SIZE" | "EMPTY_BATCH" | "BATCH_TOO_LARGE" | "INVALID_REQUEST" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "REQUEST_TOO_LARGE" | "RATE_LIMITED" | "INTERNAL" | "UNAVAILABLE" | (string & {});
         };
-        /** @description GetProductDailyLowsResponse is a Product's daily lows over the last 30 days. */
+        /** @description GetProductDailyLowsResponse is a Product's daily lows over the last 14 days. */
         GetProductDailyLowsResponse: {
             /** @description True when the identifier named a Product since merged into this one. Over HTTP/JSON that request is redirected instead, so a response is never merged. */
             is_merged: boolean;
@@ -287,7 +287,7 @@ export interface components {
             points: components["schemas"]["DailyLow"][];
             /**
              * Format: date
-             * @description The first UTC date of the 30-day window.
+             * @description The first UTC date of the 14-day window.
              */
             window_start: string;
             /** @description Why points is empty: NO_DATA (no price history) or MIXED_CURRENCY (the points span more than one currency). Treat an unknown reason as no data. */

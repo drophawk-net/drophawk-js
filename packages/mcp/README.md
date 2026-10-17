@@ -54,10 +54,10 @@ Add this to `~/.cursor/mcp.json` (or `.cursor/mcp.json` in a project).
 | --- | --- |
 | `search_products(query, limit?)` | Find Products by text, such as a model name or number. Returns the best matches first, one page, `limit` 1 to 50 (default 10). |
 | `get_products(identifiers[])` | Get one or many Products, up to 50, by `model_slug` or raw model number. Results keep the order asked and a Product that is not found is reported in its own entry. A batch counts as one request. |
-| `get_daily_lows(identifier)` | Get the last 30 days of daily lows for a Product: the lowest price observed each day across all retailers, in stock or not. |
+| `get_daily_lows(identifier)` | Get the recent daily lows for a Product: the lowest price observed each day across all retailers, in stock or not. |
 
 Every tool answers with compact markdown for the model and the same data as `structuredContent`, described by the tool's `outputSchema`.
-In `structuredContent` a Product's `best_price` is `{ price, observed_at, retailer }` with the `retailer` as `{ slug, name }`, a batch entry says `is_merged`, and daily lows add the Product's `model_slug`, `is_merged` and the `window_start` of the 30-day window when the API sends them.
+In `structuredContent` a Product's `best_price` is `{ price, observed_at, retailer }` with the `retailer` as `{ slug, name }`, a batch entry says `is_merged`, and daily lows add the Product's `model_slug`, `is_merged` and the `window_start` of the window when the API sends them.
 Amounts are decimal strings with any number of decimal places (never rounded) and are shown as the API sent them.
 Failures come back as a tool error (`isError: true`) with a short explanation of what to do next, for example how long to wait after `RATE_LIMITED`.
 
@@ -129,7 +129,7 @@ Illustrative: the Product, prices and link below are made up.
 > The assistant calls `search_products("rtx 4070 super", 5)`, picks the Product that matches, then calls `get_daily_lows` for it.
 >
 > **Assistant:** The lowest in-stock price DropHawk last saw for the Gigabyte RTX 4070 Super Windforce OC is 849.00 AUD at PC Case Gear (at last check), in stock at 4 retailers.
-> Over the last 30 days its daily low ranged from 829.00 AUD to 899.00 AUD, so this is close to the bottom of the range.
+> Over the last 14 days its daily low ranged from 829.00 AUD to 899.00 AUD, so this is close to the bottom of the range.
 > Prices are observed rather than live, so check the retailer before you pay.
 > If you want to compare, the full price history is at https://drophawk.net/p/gv-n407swf3oc-12gd.
 > To buy at the best price: https://go.drophawk.net/p/gv-n407swf3oc-12gd?src=mcp&rep=json&sig=...

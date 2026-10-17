@@ -66,7 +66,7 @@ export type SearchPage = Omit<Schemas["SearchProductsResponse"], "products"> & {
   products: Product[];
 };
 
-/** A Product's daily lows over the last 30 days; `points` is empty when `withheld_reason` is set. `model_slug` names the Product and `window_start` is the window's first UTC date. */
+/** A Product's daily lows over the last 14 days; `points` is empty when `withheld_reason` is set. `model_slug` names the Product and `window_start` is the window's first UTC date. */
 export type DailyLows = Schemas["GetProductDailyLowsResponse"];
 
 /** The ComponentTypes, ordered by name. */
