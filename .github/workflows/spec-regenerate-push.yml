@@ -1,0 +1,222 @@
+name: Spec regenerate push
+
+# Commits the files the "Spec regenerate" workflow generated to its `sync-spec` pull request, and pushes them with
+# a dedicated GitHub App's token so CI runs on the result. That push triggers "Spec regenerate" once more, which
+# generates the same files, and this workflow then finds nothing to commit.
+#
+# A workflow_run workflow always runs the default branch's copy of this file, and both jobs run only the default
+# branch's scripts; neither runs pull request code. Two jobs, because GitHub delivers an environment's secrets to
+# the runner when a job starts:
+#
+# - validate has no environment and no secrets. It does all the parsing of untrusted input: the artifact from the
+#   pull request run (extract-generated.sh accepts exactly the generated paths, as regular files, under a size cap)
+#   and the pull request's head commit (read as git objects only, never checked out). It records each file's
+#   SHA-256 as a job output and re-uploads each one as a raw, unzipped artifact.
+# - push runs in the `spec-regenerate` environment, restricted to main, which holds the App key. It parses no
+#   archive and checks nothing out: it downloads the raw files, checks their SHA-256 against validate's outputs,
+#   fetches only the head commit (depth 1), builds the commit with git plumbing that reads only the trees along the
+#   two generated paths, and pushes it only if the branch is still at the commit it was built on.
+
+on:
+  workflow_run:
+    workflows: ["Spec regenerate"]
+    types: [completed]
+
+# No concurrency group: one group keeps only one pending run, so an unrelated completion could replace the queued run
+# for the current head. Runs need no serialising: each acts only on its own head commit, and the push is an exact
+# compare-and-swap against that commit, so at most one run per head can land and a stale one is rejected.
+
+permissions: {}
+
+env:
+  SYNC_BRANCH: sync-spec
+  GENERATED_PATHS: >-
+    packages/sdk/src/generated/api.ts
+    packages/mcp/src/generated/catalogue-limits.ts
+  # The generated files are about 60 KB together; these leave ample room and bound what an untrusted run can upload.
+  MAX_FILE_BYTES: "2097152"
+  MAX_ZIP_BYTES: "2097152"
+  REGEN_NAME: drophawk-js spec regenerate
+  REGEN_EMAIL: noreply@drophawk.net
+  HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+
+jobs:
+  validate:
+    if: >-
+      github.repository == 'drophawk-net/drophawk-js' &&
+      github.event.workflow_run.path == '.github/workflows/spec-regenerate.yml' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.head_branch == 'sync-spec'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      changed: ${{ steps.check.outputs.changed }}
+      sha256: ${{ steps.check.outputs.sha256 }}
+    steps:
+      # main's scripts; nothing from the pull request runs in this workflow.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          path: trusted
+          persist-credentials: false
+
+      # Acts only on the open pull request from this repository's sync branch into main, and only while its head
+      # is still the commit the artifact was generated from.
+      - name: Find the sync pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          owner="${GITHUB_REPOSITORY%%/*}"
+          prs="$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&base=main&head=$owner:$SYNC_BRANCH" \
+            --jq "[.[] | select(.head.repo.full_name == \"$GITHUB_REPOSITORY\" and .head.ref == \"$SYNC_BRANCH\")]")"
+          if [ "$(jq length <<<"$prs")" != 1 ]; then
+            echo "::notice::No single open pull request from $SYNC_BRANCH into main; nothing to do."
+            echo "act=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "$(jq -r '.[0].head.sha' <<<"$prs")" != "$HEAD_SHA" ]; then
+            echo "::notice::$SYNC_BRANCH has moved on since this artifact was generated; the newer run will handle it."
+            echo "act=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "act=true" >> "$GITHUB_OUTPUT"
+
+      # The size is checked before downloading, and the download is cut off at the cap regardless.
+      - name: Download and extract the generated files
+        if: steps.pr.outputs.act == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts?name=generated-code" --jq '[.artifacts[] | select(.name == "generated-code")]')"
+          [ "$(jq length <<<"$artifacts")" = 1 ] || { echo "::error::expected exactly one generated-code artifact"; exit 1; }
+          [ "$(jq -r '.[0].expired' <<<"$artifacts")" = false ] || { echo "::error::the generated-code artifact has expired"; exit 1; }
+          size="$(jq -r '.[0].size_in_bytes' <<<"$artifacts")"
+          [ "$size" -le "$MAX_ZIP_BYTES" ] || { echo "::error::the artifact is $size bytes, over the $MAX_ZIP_BYTES byte cap"; exit 1; }
+          id="$(jq -r '.[0].id' <<<"$artifacts")"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" | head -c "$((MAX_ZIP_BYTES + 1))" > "$RUNNER_TEMP/generated.zip"
+          trusted/.github/scripts/spec-regenerate/extract-generated.sh "$RUNNER_TEMP/generated.zip" "$RUNNER_TEMP/generated"
+
+      # Only the head commit's objects, in a bare repository: no working tree, so nothing in the pull request is
+      # written to disk as files or interpreted by git.
+      - name: Fetch the head commit
+        if: steps.pr.outputs.act == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git init --quiet --bare "$RUNNER_TEMP/head.git"
+          GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.https://github.com/.extraheader" \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+            git -C "$RUNNER_TEMP/head.git" -c core.hooksPath=/dev/null fetch --quiet --depth=1 --no-tags \
+            "https://github.com/$GITHUB_REPOSITORY.git" "$HEAD_SHA"
+
+      - name: Check for a change and record the files' SHA-256
+        if: steps.pr.outputs.act == 'true'
+        id: check
+        run: |
+          result="$(trusted/.github/scripts/spec-regenerate/commit-generated.sh "$RUNNER_TEMP/head.git" "$HEAD_SHA" "$RUNNER_TEMP/generated" --check)"
+          echo "$result" >> "$GITHUB_OUTPUT"
+          [ "$result" = changed=true ] || { echo "The generated files already match the spec; nothing to commit."; exit 0; }
+          sums=""
+          for rel in $GENERATED_PATHS; do sums="$sums $rel=$(sha256sum "$RUNNER_TEMP/generated/$rel" | cut -d' ' -f1)"; done
+          echo "sha256=${sums# }" >> "$GITHUB_OUTPUT"
+
+      # Raw uploads (archive: false), so the push job downloads bytes and parses no archive. Each is named after
+      # its file's basename.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.check.outputs.changed == 'true'
+        with:
+          path: ${{ runner.temp }}/generated/packages/sdk/src/generated/api.ts
+          archive: false
+          if-no-files-found: error
+          retention-days: 1
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.check.outputs.changed == 'true'
+        with:
+          path: ${{ runner.temp }}/generated/packages/mcp/src/generated/catalogue-limits.ts
+          archive: false
+          if-no-files-found: error
+          retention-days: 1
+
+  push:
+    needs: validate
+    if: needs.validate.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Restricted to main. Holds only this workflow's App: the variable DROPHAWK_JS_REGEN_CLIENT_ID and the secret
+    # DROPHAWK_JS_REGEN_PRIVATE_KEY. The App has contents write on this repository and nothing else.
+    environment: spec-regenerate
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          path: trusted
+          persist-credentials: false
+
+      - name: Download the validated files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA256: ${{ needs.validate.outputs.sha256 }}
+        run: |
+          artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq '.artifacts')"
+          for rel in $GENERATED_PATHS; do
+            name="$(basename "$rel")"
+            matches="$(jq --arg n "$name" '[.[] | select(.name == $n)]' <<<"$artifacts")"
+            [ "$(jq length <<<"$matches")" = 1 ] || { echo "::error::expected exactly one artifact for $rel"; exit 1; }
+            expected=""
+            for pair in $SHA256; do [ "${pair%%=*}" = "$rel" ] && expected="${pair#*=}"; done
+            [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::validate recorded no SHA-256 for $rel"; exit 1; }
+            mkdir -p "$RUNNER_TEMP/generated/$(dirname "$rel")"
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$(jq -r '.[0].id' <<<"$matches")/zip" \
+              | head -c "$((MAX_FILE_BYTES + 1))" > "$RUNNER_TEMP/generated/$rel"
+            [ "$(sha256sum "$RUNNER_TEMP/generated/$rel" | cut -d' ' -f1)" = "$expected" ] \
+              || { echo "::error::$rel does not match the SHA-256 validate recorded"; exit 1; }
+          done
+
+      - name: Fetch the head commit and build the regenerate commit
+        id: commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git init --quiet --bare "$RUNNER_TEMP/head.git"
+          GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.https://github.com/.extraheader" \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+            git -C "$RUNNER_TEMP/head.git" -c core.hooksPath=/dev/null fetch --quiet --depth=1 --no-tags \
+            "https://github.com/$GITHUB_REPOSITORY.git" "$HEAD_SHA"
+          new="$(trusted/.github/scripts/spec-regenerate/commit-generated.sh "$RUNNER_TEMP/head.git" "$HEAD_SHA" "$RUNNER_TEMP/generated")"
+          [ -n "$new" ] || { echo "::error::validate saw a change but no commit was built"; exit 1; }
+          echo "new=$new" >> "$GITHUB_OUTPUT"
+
+      - id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.DROPHAWK_JS_REGEN_CLIENT_ID }}
+          private-key: ${{ secrets.DROPHAWK_JS_REGEN_PRIVATE_KEY }}
+          permission-contents: write
+
+      # An exact compare-and-swap (push-generated.sh): the push lands only if the branch still points at the commit
+      # the files were generated from. Losing it ends with a notice, not a failure: the spec sync rewrote the branch
+      # or deleted it (closing a stale pull request), or another run for the same head already pushed its regenerate
+      # commit. The branch is never recreated.
+      - name: Push to the sync branch
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          NEW_SHA: ${{ steps.commit.outputs.new }}
+        run: |
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader" GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
+          trusted/.github/scripts/spec-regenerate/push-generated.sh "$RUNNER_TEMP/head.git" \
+            "https://github.com/$GITHUB_REPOSITORY.git" "$HEAD_SHA" "$NEW_SHA"
