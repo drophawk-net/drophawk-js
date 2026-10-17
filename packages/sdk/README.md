@@ -29,14 +29,13 @@ if (!first) throw new Error("no matches");
 const product = await dh.getProduct(first.model_slug);
 
 const best = product.pricing.best_price;
-console.log(best ? `${product.name}: ${best.price.amount} ${best.price.currency} (seen ${best.observed_at})` : `${product.name}: no price right now`);
+console.log(best ? `${product.name}: ${best.price.amount} ${best.price.currency} at ${best.retailer.name} (seen ${best.observed_at})` : `${product.name}: no price right now`);
 
 // Send the person here. Use it exactly as given.
 console.log(product.best_price_url);
 ```
 
 `best_price_url` is a DropHawk link that resolves to the cheapest in-stock store when it is followed, not when you fetched it, so it stays correct however long you keep it.
-It never names a store.
 **Pass it through unchanged**: do not rewrite, shorten, strip or add query parameters, because its parameters attribute the click.
 When the Product has no `best_price` at that moment (nothing in stock, or in-stock prices in more than one currency), following `best_price_url` sends the buyer to the Product's page on drophawk.net instead of to a store, and no click toward a store is recorded.
 `product.url` is the Product's page on drophawk.net if you want to show the full price comparison instead.
@@ -44,7 +43,9 @@ When the Product has no `best_price` at that moment (nothing in stock, or in-sto
 Money is `{ amount: "1299.00", currency: "AUD" }`.
 `amount` is a decimal string so it is exact; parse it with a decimal type, not a float.
 It usually has the currency's minor units (2 for AUD, 0 for JPY) but can have fewer or more decimal places and is never rounded, so never reject an amount for its decimals.
-`best_price` is `{ price, observed_at }`: the Money, and when a Retailer last confirmed it.
+`best_price` is `{ price, observed_at, retailer }`: the Money, when the Retailer last confirmed it, and that Retailer as `{ slug, name }`.
+`retailer` is the Retailer offering the price as of `observed_at`; no other Retailer is ever named.
+`best_price_url` resolves when it is followed, so it may since have moved to a different Retailer.
 
 ## Methods
 

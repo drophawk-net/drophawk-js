@@ -148,15 +148,17 @@ export interface components {
             /** @description One result per identifier, in request order. */
             results: components["schemas"]["ProductResult"][];
         };
-        /** @description BestPrice is a Product's lowest current in-stock price. */
+        /** @description BestPrice is a Product's lowest current in-stock price and the Retailer offering it. */
         BestPrice: {
             /**
              * Format: date-time
-             * @description When a Retailer last confirmed this price.
+             * @description When the Retailer last confirmed this price.
              */
             observed_at: string;
             /** @description The price. */
             price: components["schemas"]["Money"];
+            /** @description The Retailer offering this price as of observed_at. On a tie, the one best_price_url resolved to when this response was produced. The link resolves when followed, so it goes to the current BestPrice, which may since have moved to another Retailer. */
+            retailer: components["schemas"]["RetailerRef"];
         };
         /** @description Brand is a maker of Products, with how many Products it has. */
         Brand: {
@@ -308,11 +310,11 @@ export interface components {
             /** @description ISO 4217 code, for example "AUD". */
             currency: string;
         };
-        /** @description Product is a physical part at manufacturer-SKU level and its prices across Retailers, which are never named. */
+        /** @description Product is a physical part at manufacturer-SKU level and its prices across Retailers. Only the Retailer offering the BestPrice is named. */
         Product: {
             /**
              * Format: uri
-             * @description A DropHawk link that sends a buyer to the Retailer with the best price when it is followed, or to the Product's page when there is none. Use it unmodified.
+             * @description A DropHawk link that sends a buyer to the Retailer with the best price when it is followed, which may differ from pricing.best_price.retailer if the BestPrice has moved since, or to the Product's page when there is none. Use it unmodified.
              */
             best_price_url: string;
             /** @description The Product's maker. */
@@ -390,6 +392,13 @@ export interface components {
         ProductResultError: {
             /** @description PRODUCT_NOT_FOUND or INVALID_IDENTIFIER, as GET /v1/products/{identifier} would answer. Treat an unknown reason as unresolved. */
             reason: "PRODUCT_NOT_FOUND" | "INVALID_IDENTIFIER" | (string & {});
+        };
+        /** @description RetailerRef names a store that sells Products. */
+        RetailerRef: {
+            /** @description The Retailer's display name, for example "PC Case Gear". */
+            name: string;
+            /** @description Stable URL-safe identifier, for example "pccasegear". */
+            slug: string;
         };
         /** @description SearchProductsResponse is one page of matching Products. */
         SearchProductsResponse: {

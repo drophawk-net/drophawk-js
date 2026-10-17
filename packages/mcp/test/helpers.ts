@@ -51,7 +51,7 @@ export function product(slug = "rtx-4090", overrides: Partial<Product> = {}): Pr
     specs: { vram: { number_value: 24, unit: "GB" }, ray_tracing: { bool_value: true }, chipset: { string_value: "RTX 4090" } },
     images: [{ url: `https://img.drophawk.net/${slug}.webp`, alt_text: "", width: 100, height: 100 }],
     pricing: {
-      best_price: { price: { amount: "1999.00", currency: "AUD" }, observed_at: "2026-10-09T01:02:03Z" },
+      best_price: { price: { amount: "1999.00", currency: "AUD" }, observed_at: "2026-10-09T01:02:03Z", retailer: { slug: "pccasegear", name: "PC Case Gear" } },
       in_stock_count: 3,
       all_time_low: { price: { amount: "1799.00", currency: "AUD" }, date: "2025-11-28" },
     },

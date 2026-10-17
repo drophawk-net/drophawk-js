@@ -36,7 +36,10 @@ describe("tools/list", () => {
       expect(d).toContain("not live retailer quotes");
       expect(d).toContain("PC components and related hardware sold by Australian retailers");
       expect(d).toContain("best_price_url only opens the Product page");
-      expect(d).toContain("DropHawk does not say which retailer has the best price; do not guess one.");
+      expect(d).toContain("best_price.retailer names the retailer offering best_price as of observed_at");
+      expect(d).toContain('present it as "at last check"');
+      expect(d).toContain("No other retailer is named, so do not guess others.");
+      expect(d).toContain("best_price_url resolves when followed and may now go to a different retailer.");
       for (const reason of ["OUT_OF_STOCK", "NO_DATA", "MIXED_CURRENCY"]) expect(d).toContain(reason);
     }
     const lows = tools.find((t) => t.name === "get_daily_lows")?.description ?? "";
@@ -97,7 +100,7 @@ describe("search_products", () => {
     const sc = result.structuredContent as { products: { best_price_url: string; url: string; best_price: unknown }[]; has_more: boolean };
     expect(sc.products[0]?.best_price_url).toBe(p.best_price_url);
     expect(sc.products[0]?.url).toBe(p.url);
-    expect(sc.products[0]?.best_price).toEqual({ price: { amount: "1999.00", currency: "AUD" }, observed_at: "2026-10-09T01:02:03Z" });
+    expect(sc.products[0]?.best_price).toEqual({ price: { amount: "1999.00", currency: "AUD" }, observed_at: "2026-10-09T01:02:03Z", retailer: { slug: "pccasegear", name: "PC Case Gear" } });
     expect(sc.has_more).toBe(false);
 
     expect(calls).toHaveLength(1);
@@ -226,6 +229,39 @@ describe("get_daily_lows", () => {
     const sc = result.structuredContent as { points: { date: string; price: { amount: string } }[] };
     expect(sc.points.map((p) => p.date)).toEqual(["2026-09-08", "2026-09-12", "2026-09-20"]);
     expect(sc.points[1]?.price.amount).toBe("1950.00");
+  });
+
+  it.each([[""], ["  "], [false], [5], ["lower case"]])("suppresses the series when withheld_reason is the present but malformed %j", async (reason) => {
+    const { client } = await setup(() => json({ points, withheld_reason: reason }));
+    const result = await client.callTool({ name: "get_daily_lows", arguments: { identifier: "rtx-4090" } });
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as { points: unknown[]; withheld_reason?: string };
+    expect(sc.points).toEqual([]);
+    expect(sc.withheld_reason).toBe("UNKNOWN");
+    const text = textOf(result);
+    expect(text).toContain("the series is unknown (UNKNOWN)");
+    expect(text).not.toMatch(/1950\.00|2050\.00|2100\.00|Lowest/);
+  });
+
+  it("suppresses the series when a real withheld_reason arrives beside points", async () => {
+    const { client } = await setup(() => json({ points, withheld_reason: "MIXED_CURRENCY" }));
+    const result = await client.callTool({ name: "get_daily_lows", arguments: { identifier: "rtx-4090" } });
+    const sc = result.structuredContent as { points: unknown[]; withheld_reason?: string; dropped_points?: number };
+    expect(sc.points).toEqual([]);
+    expect(sc.withheld_reason).toBe("MIXED_CURRENCY");
+    expect(sc).not.toHaveProperty("dropped_points");
+    const text = textOf(result);
+    expect(text).toContain("its prices span more than one currency");
+    expect(text).not.toMatch(/1950\.00|2050\.00|2100\.00|Lowest/);
+  });
+
+  it("keeps the series when withheld_reason is null or absent", async () => {
+    const { client } = await setup(() => json({ points, withheld_reason: null }));
+    const result = await client.callTool({ name: "get_daily_lows", arguments: { identifier: "rtx-4090" } });
+    const sc = result.structuredContent as { points: unknown[]; withheld_reason?: string };
+    expect(sc.points).toHaveLength(3);
+    expect(sc).not.toHaveProperty("withheld_reason");
+    expect(textOf(result)).toContain("Lowest 1950.00");
   });
 
   it("uses the response model_slug, is_merged and window_start", async () => {

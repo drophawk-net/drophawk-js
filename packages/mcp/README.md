@@ -57,7 +57,7 @@ Add this to `~/.cursor/mcp.json` (or `.cursor/mcp.json` in a project).
 | `get_daily_lows(identifier)` | Get the last 30 days of daily lows for a Product: the lowest price observed each day across all retailers, in stock or not. |
 
 Every tool answers with compact markdown for the model and the same data as `structuredContent`, described by the tool's `outputSchema`.
-In `structuredContent` a Product's `best_price` is `{ price, observed_at }`, a batch entry says `is_merged`, and daily lows add the Product's `model_slug`, `is_merged` and the `window_start` of the 30-day window when the API sends them.
+In `structuredContent` a Product's `best_price` is `{ price, observed_at, retailer }` with the `retailer` as `{ slug, name }`, a batch entry says `is_merged`, and daily lows add the Product's `model_slug`, `is_merged` and the `window_start` of the 30-day window when the API sends them.
 Amounts are decimal strings with any number of decimal places (never rounded) and are shown as the API sent them.
 Failures come back as a tool error (`isError: true`) with a short explanation of what to do next, for example how long to wait after `RATE_LIMITED`.
 
@@ -66,14 +66,16 @@ Failures come back as a tool error (`isError: true`) with a short explanation of
 Every Product carries two links.
 
 - `best_price_url` is for someone who is ready to buy.
-  It is a DropHawk link that resolves to the best price at the moment it is followed, and it never names a retailer.
+  It is a DropHawk link that resolves to the best price at the moment it is followed, so it may go to a different retailer than the one `best_price` names.
   Following it is recorded as a click, so an assistant must never fetch, prefetch or unfurl it.
   The server asks the API for it as an MCP surface, so those clicks are attributed to MCP.
 - `url` is for someone who is still comparing.
   It is the Product's page on drophawk.net with the full price comparison and history.
 
 When a Product has no best price, `best_price_url` only opens the Product page, so the assistant is told to give `url` instead and to say the Product is out of stock if that is why.
-DropHawk never says which retailer has the best price, so the assistant is told not to guess one.
+`best_price` names the one retailer offering it as of `observed_at`, and the assistant presents it as "at last check".
+No other retailer is ever named, so the assistant is told not to guess others.
+The retailer's name is text from the retailer, so it is cleaned like other free text and shown only inside the untrusted block; a malformed retailer is left out.
 
 Both are passed through exactly as the API gave them, and only when they are https links on drophawk.net in their exact canonical form; otherwise the answer says the link is unavailable.
 
@@ -126,7 +128,7 @@ Illustrative: the Product, prices and link below are made up.
 >
 > The assistant calls `search_products("rtx 4070 super", 5)`, picks the Product that matches, then calls `get_daily_lows` for it.
 >
-> **Assistant:** The lowest in-stock price DropHawk last saw for the Gigabyte RTX 4070 Super Windforce OC is 849.00 AUD, in stock at 4 retailers.
+> **Assistant:** The lowest in-stock price DropHawk last saw for the Gigabyte RTX 4070 Super Windforce OC is 849.00 AUD at PC Case Gear (at last check), in stock at 4 retailers.
 > Over the last 30 days its daily low ranged from 829.00 AUD to 899.00 AUD, so this is close to the bottom of the range.
 > Prices are observed rather than live, so check the retailer before you pay.
 > If you want to compare, the full price history is at https://drophawk.net/p/gv-n407swf3oc-12gd.
