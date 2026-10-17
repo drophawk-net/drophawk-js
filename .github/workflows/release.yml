@@ -47,9 +47,15 @@ jobs:
     outputs:
       has-changesets: ${{ steps.changesets.outputs.has-changesets }}
     steps:
+      # Full history: `changeset version` looks up the commit that added each changeset (for changelog links), and in a
+      # shallow clone it runs `git fetch --deepen` to find it. With no persisted credentials that fetch cannot
+      # authenticate against this repository, so the whole history is fetched here, by checkout, with the read-only
+      # GITHUB_TOKEN. The changesets step then makes no network git call at all: it pushes through the GitHub API with
+      # the App token, so git never needs a credential in that step.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -85,9 +91,10 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
 
-      # changesets/action pushes through the GitHub API with `github-token`, and hands the same token to the version script
-      # as GITHUB_TOKEN, where changelog-github uses it to look up PR and author links. It refuses to run if a GITHUB_TOKEN
-      # environment variable that differs from the input is set, so none is set here.
+      # changesets/action pushes through the GitHub API with `github-token` (push-with-git-cli is off, so it runs no git
+      # push), and hands the same token to the version script as GITHUB_TOKEN, where changelog-github uses it to look up
+      # PR and author links. It refuses to run if a GITHUB_TOKEN environment variable that differs from the input is set,
+      # so none is set here. Its git calls (checkout, reset, diff) are all local, given the full history fetched above.
       - id: changesets
         uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
         with:
