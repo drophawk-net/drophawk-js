@@ -8,6 +8,16 @@ updates:
     cooldown:
       default-days: 7
     open-pull-requests-limit: 5
+    ignore:
+      # Types newer than the minimum supported Node (engines.node >=22) let code call APIs that crash on Node 22.
+      # Minor and patch updates of the 22.x line still come through.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      # TypeScript 7 is the native compiler and ships no JavaScript compiler API: openapi-typescript (generate) and
+      # the README snippet test both import `typescript` and fail. Lift once openapi-typescript supports TypeScript 7
+      # and the README test no longer needs the JS API.
+      - dependency-name: "typescript"
+        versions: [">=7.0.0"]
     groups:
       bun-dependencies:
         patterns: ["*"]
