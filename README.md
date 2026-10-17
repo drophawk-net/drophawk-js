@@ -26,7 +26,9 @@ Review the whole sync diff, generated files included, before merging.
 
 ```sh
 bun install --frozen-lockfile
-bun run generate                          # after changing spec/; add -- --check to verify
+bun run generate                          # after changing spec/
+bun run --filter @drophawk/sdk generate -- --check
+bun run --filter @drophawk/mcp generate -- --check
 bun run --filter @drophawk/sdk typecheck
 bun run --filter @drophawk/sdk test       # also type-checks the README's ts blocks
 bun run --filter @drophawk/sdk build      # the MCP package builds against the SDK's dist

@@ -76,7 +76,8 @@ for (const r of results) {
 ```
 
 Up to 50 identifiers, counted as one request.
-An unresolved identifier comes back as `result.error`; only `EMPTY_BATCH` or `BATCH_TOO_LARGE` throws.
+An identifier that does not resolve comes back in its own `result.error` and never fails the others.
+A failure of the request as a whole rejects the call like any other method: an invalid batch (`EMPTY_BATCH`, `BATCH_TOO_LARGE`, ...), `RATE_LIMITED`, `UNAVAILABLE`, `INVALID_RESPONSE`, a network error or an abort.
 
 ### Pagination
 
@@ -92,8 +93,10 @@ To page by hand, pass `next_page_token` as `page_token`; it is empty on the last
 
 ### Daily lows
 
-`points` holds the lowest price on each UTC day of the last 14, across all Retailers, in stock or not, oldest first, starting at `window_start`.
-One point with `is_carried_forward: true` may precede the window: the price in force when it opened.
+`window_start` is the first of the last 14 UTC days.
+Each point is the lowest price on one day, across all Retailers, in stock or not, oldest first.
+The series is sparse: a day with no observation has no point, so read each point's `date` rather than its array index.
+One point with `is_carried_forward: true` may precede the window: the latest earlier price, in force when the window opened.
 Because stock is ignored, a daily low can be below anything buyable today.
 
 ## Options

@@ -42,7 +42,7 @@ Each tool answers in compact markdown for the model, with the same data as `stru
 - A `get_products` batch counts as one request.
   An identifier with no Product gets its own not-found entry without failing the others, and `is_merged: true` means it was merged into another Product, whose `model_slug` to use from then on.
 - `get_daily_lows` adds `model_slug`, `is_merged` and `window_start`, the window's first UTC day.
-  Each point is that day's lowest price across all retailers, in stock or not; an `is_carried_forward` point before the window is the price in force when it opened.
+  Each point is the lowest price on its `date` across all retailers, in stock or not, and days with no observation have no point; an `is_carried_forward` point before the window is the price in force when it opened.
 - Amounts are decimal strings, passed through exactly and never rounded.
 - Failures are tool errors (`isError: true`) with a short next step, such as how long to wait after `RATE_LIMITED`.
 
