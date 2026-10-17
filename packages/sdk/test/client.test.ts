@@ -292,3 +292,160 @@ describe("SpecValue", () => {
     expect([ok, none, two, wrong]).toBeDefined();
   });
 });
+
+describe("hardening", () => {
+  const stream = (chunks: Uint8Array[]) =>
+    new ReadableStream<Uint8Array>({
+      pull(controller) {
+        const next = chunks.shift();
+        if (next) controller.enqueue(next);
+        else controller.close();
+      },
+    });
+
+  it("never sends credentials", async () => {
+    const m = mockFetch(() => json({ brands: [] }));
+    await new DropHawk({ fetch: m.fetch }).listBrands();
+    expect(m.calls[0]!.init.credentials).toBe("omit");
+  });
+
+  it("rejects a body over 8 MiB with INVALID_RESPONSE and stops reading", async () => {
+    const chunk = new Uint8Array(1024 * 1024).fill(0x20);
+    let pulled = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled++;
+        controller.enqueue(chunk);
+      },
+    });
+    const m = mockFetch(() => new Response(body, { status: 200 }));
+    const err = await new DropHawk({ fetch: m.fetch }).listBrands().catch((e) => e);
+    expect(err).toBeInstanceOf(DropHawkError);
+    expect(err.reason).toBe("INVALID_RESPONSE");
+    expect(pulled).toBeLessThan(20);
+  });
+
+  it("caps error bodies too", async () => {
+    const m = mockFetch(() => new Response(stream(Array.from({ length: 10 }, () => new Uint8Array(1024 * 1024))), { status: 500 }));
+    const err = await new DropHawk({ fetch: m.fetch }).listBrands().catch((e) => e);
+    expect(err).toBeInstanceOf(DropHawkError);
+    expect(err.reason).toBe("INVALID_RESPONSE");
+  });
+
+  it("rejects an oversized declared content-length without reading", async () => {
+    const m = mockFetch(() => new Response("{}", { status: 200, headers: { "content-length": String(9 * 1024 * 1024) } }));
+    const err = await new DropHawk({ fetch: m.fetch }).listBrands().catch((e) => e);
+    expect(err.reason).toBe("INVALID_RESPONSE");
+  });
+
+  describe("rejects promptly while an unread clone keeps the body alive", () => {
+    // Cancelling one branch of a tee resolves only once every branch is cancelled, so awaiting the cancel would hang forever here.
+    const kept: Response[] = [];
+    afterEach(() => void kept.splice(0));
+    function retaining(res: Response): () => Response {
+      return () => {
+        kept.push(res.clone());
+        return res;
+      };
+    }
+    const endless = () => new ReadableStream<Uint8Array>({ pull: (c) => c.enqueue(new Uint8Array(1024 * 1024).fill(0x20)) });
+    const within = <T,>(p: Promise<T>, ms = 1000) =>
+      Promise.race([p, new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`still pending after ${ms} ms`)), ms))]);
+
+    it.each([
+      ["a declared oversized body", () => new Response(endless(), { status: 200, headers: { "content-length": String(9 * 1024 * 1024) } })],
+      ["a streamed oversized body", () => new Response(endless(), { status: 200 })],
+      [
+        "a redirect to another origin",
+        () => {
+          const res = new Response(endless(), { status: 200 });
+          Object.defineProperty(res, "url", { value: "https://evil.example/v1/brands" });
+          return res;
+        },
+      ],
+    ])("%s", async (_, make) => {
+      const m = mockFetch(retaining(make()));
+      const err = await within(new DropHawk({ fetch: m.fetch }).listBrands().catch((e: unknown) => e));
+      expect(err).toBeInstanceOf(DropHawkError);
+      expect((err as DropHawkError).reason).toBe("INVALID_RESPONSE");
+    });
+  });
+
+  it("still reads an ordinary body", async () => {
+    const m = mockFetch(() => new Response(stream([new TextEncoder().encode('{"brands":'), new TextEncoder().encode("[]}")]), { status: 200 }));
+    expect(await new DropHawk({ fetch: m.fetch }).listBrands()).toEqual({ brands: [] });
+  });
+
+  it("accepts a same-origin redirect (merged Product)", async () => {
+    const m = mockFetch(() => json(product("survivor"), { url: "https://api.drophawk.net/v1/products/survivor", redirected: true }));
+    expect((await new DropHawk({ fetch: m.fetch }).getProduct("old")).model_slug).toBe("survivor");
+  });
+
+  it("rejects a redirect that ends on another origin", async () => {
+    const m = mockFetch(() => json({ brands: [] }, { url: "https://evil.example/v1/brands", redirected: true }));
+    const err = await new DropHawk({ fetch: m.fetch }).listBrands().catch((e) => e);
+    expect(err).toBeInstanceOf(DropHawkError);
+    expect(err.reason).toBe("INVALID_RESPONSE");
+  });
+
+  it("never lets fetch follow a redirect for the batch POST, so its body is never resent elsewhere", async () => {
+    const m = mockFetch(() => json({ results: [] }));
+    await new DropHawk({ fetch: m.fetch }).getProducts(["a"]);
+    expect(m.calls[0]!.init.method).toBe("POST");
+    expect(m.calls[0]!.init.redirect).toBe("manual");
+  });
+
+  it.each([301, 302, 303, 307, 308])("rejects a %i answer to the batch POST", async (status) => {
+    const m = mockFetch(() => new Response(null, { status, headers: { location: "https://evil.example/v1/products:batchGet" } }));
+    const err = await new DropHawk({ fetch: m.fetch }).getProducts(["a"]).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DropHawkError);
+    expect((err as DropHawkError).reason).toBe("INVALID_RESPONSE");
+    expect(m.calls).toHaveLength(1);
+  });
+
+  it("rejects an opaque redirect (how a browser reports a manual redirect) to the batch POST", async () => {
+    const res = new Response(null, { status: 200 });
+    Object.defineProperty(res, "type", { value: "opaqueredirect" });
+    Object.defineProperty(res, "status", { value: 0 });
+    Object.defineProperty(res, "ok", { value: false });
+    const err = await new DropHawk({ fetch: mockFetch(() => res).fetch }).getProducts(["a"]).catch((e: unknown) => e);
+    expect((err as DropHawkError).reason).toBe("INVALID_RESPONSE");
+  });
+
+  it("still follows redirects for GET (a merged Product answers 301)", async () => {
+    const m = mockFetch(() => json({ brands: [] }));
+    await new DropHawk({ fetch: m.fetch }).listBrands();
+    expect(m.calls[0]!.init.redirect).toBe("follow");
+  });
+
+  it("rejects a redirect to another origin even when the answer is an error", async () => {
+    const m = mockFetch(() => json({}, { status: 500, url: "http://api.drophawk.net/v1/brands", redirected: true }));
+    const err = await new DropHawk({ fetch: m.fetch }).listBrands().catch((e) => e);
+    expect(err.reason).toBe("INVALID_RESPONSE");
+  });
+});
+
+describe("baseUrl validation", () => {
+  it.each(["ftp://api.drophawk.net", "javascript:alert(1)", "not a url", "https://api.drophawk.net?x=1", "https://api.drophawk.net/#frag", "https://user:pw@api.drophawk.net", "https://api.drophawk.net?", ""])(
+    "rejects %j",
+    (baseUrl) => {
+      expect(() => new DropHawk({ baseUrl })).toThrow(TypeError);
+    },
+  );
+
+  it("strips trailing slashes and keeps a path prefix", async () => {
+    const m = mockFetch(() => json({ brands: [] }));
+    await new DropHawk({ fetch: m.fetch, baseUrl: "https://gw.example.com/api///" }).listBrands();
+    expect(m.calls[0]!.url.href).toBe("https://gw.example.com/api/v1/brands");
+  });
+
+  it("handles a huge run of slashes quickly", () => {
+    const start = performance.now();
+    new DropHawk({ baseUrl: "https://api.drophawk.net" + "/".repeat(200_000) });
+    expect(performance.now() - start).toBeLessThan(500);
+  });
+
+  it("accepts http for local development", () => {
+    expect(() => new DropHawk({ baseUrl: "http://127.0.0.1:8080" })).not.toThrow();
+  });
+});

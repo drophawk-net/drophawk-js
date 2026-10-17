@@ -1,15 +1,21 @@
 name: Release
 
-# Versions and publishes the packages under packages/.
+# Versions and publishes the packages under packages/ in three jobs with separate privileges.
 #
-# - "version" opens or updates the "chore: version packages" PR while changesets
-#   are pending. It holds no publish credentials.
-# - "publish" runs only when no changesets are pending, i.e. after that PR is
-#   merged, and publishes through npm trusted publishing (OIDC): no long-lived
-#   npm token exists. npm adds provenance automatically for a public repository.
+# - "version" opens or updates the "chore: version packages" PR while changesets are pending.
+#   It holds no npm credentials, and its GITHUB_TOKEN can only read. It writes with a GitHub App token, which it requires,
+#   so that CI runs on that PR.
+# - "build" runs when no changesets are pending, i.e. after that PR is merged. It installs without
+#   lifecycle scripts, tests, builds and packs tarballs for versions that are not released yet (not on npm, or on npm
+#   without a release tag after a partial run), and uploads them.
+#   It has read-only repository access and no id-token, so nothing it runs can publish.
+# - "publish" runs in the `npm` environment, downloads the tarballs and publishes exactly those through npm
+#   trusted publishing (OIDC), tagging each as soon as it is on npm: no long-lived npm token exists. It runs no
+#   repository code and installs nothing. A rerun skips versions already on npm with the same tarball and still tags them.
+#   npm adds provenance automatically for a public repository.
 #
-# The trusted publisher on npmjs.com is bound to this exact file name, so do not
-# rename it. See packages/sdk/README.md for the one-off first publish.
+# The trusted publisher on npmjs.com is bound to this exact file name and to the environment `npm`,
+# so do not rename either. See packages/sdk/README.md for the one-off first publish.
 
 on:
   push:
@@ -19,24 +25,31 @@ on:
       - ".changeset/**"
       - "package.json"
       - "bun.lock"
+      - "bunfig.toml"
+      - "scripts/**"
       - ".github/workflows/release.yml"
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   version:
     if: github.repository == 'drophawk-net/drophawk-js'
     runs-on: ubuntu-latest
+    # The `release` environment (restricted to main) holds the GitHub App credentials:
+    #   variable DROPHAWK_JS_RELEASE_CLIENT_ID, secret DROPHAWK_JS_RELEASE_PRIVATE_KEY.
+    environment: release
+    # GITHUB_TOKEN only reads. Every write (the version branch, its commit and the pull request) is made with the
+    # release App's token below, and the job fails if the App is not configured.
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
     outputs:
       has-changesets: ${{ steps.changesets.outputs.has-changesets }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -47,47 +60,67 @@ jobs:
           node-version: 24
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile --ignore-scripts
 
+      - name: Require the release App
+        env:
+          CLIENT_ID: ${{ vars.DROPHAWK_JS_RELEASE_CLIENT_ID }}
+          PRIVATE_KEY: ${{ secrets.DROPHAWK_JS_RELEASE_PRIVATE_KEY }}
+        run: |
+          missing=()
+          [ -n "$CLIENT_ID" ] || missing+=("variable DROPHAWK_JS_RELEASE_CLIENT_ID")
+          [ -n "$PRIVATE_KEY" ] || missing+=("secret DROPHAWK_JS_RELEASE_PRIVATE_KEY")
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error title=Release App not configured::The 'release' environment is missing: ${missing[*]}. The version job writes only with the release GitHub App's token and has no GITHUB_TOKEN fallback. Configure the App as described in the README."
+            exit 1
+          fi
+
+      # The App token pushes the version commit and opens the PR. A pull request opened with GITHUB_TOKEN would not trigger CI;
+      # this one does. The token is scoped to this repository and expires with the job.
+      - id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.DROPHAWK_JS_RELEASE_CLIENT_ID }}
+          private-key: ${{ secrets.DROPHAWK_JS_RELEASE_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      # changesets/action pushes through the GitHub API with `github-token`, and hands the same token to the version script
+      # as GITHUB_TOKEN, where changelog-github uses it to look up PR and author links. It refuses to run if a GITHUB_TOKEN
+      # environment variable that differs from the input is set, so none is set here.
       - id: changesets
         uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
         with:
+          github-token: ${{ steps.app-token.outputs.token }}
           version-script: bun run version-packages
           commit-message: "chore: version packages"
           pr-title: "chore: version packages"
-        env:
-          # changelog-github looks up PR and author links through the API; this
-          # is read by the version script, not by the action itself.
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  publish:
+  build:
     needs: version
     if: github.repository == 'drophawk-net/drophawk-js' && needs.version.outputs.has-changesets == 'false'
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      id-token: write
+      contents: read
+    outputs:
+      has-tarballs: ${{ steps.pack.outputs.has-tarballs }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+          # pack-unpublished.ts also packs a version that is on npm but has no release tag, so publish can tag it.
+          fetch-tags: true
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: "1.3.10"
 
-      # Trusted publishing needs npm >= 11.5.1 and Node >= 22.14. setup-node v7
-      # does not export a dummy NODE_AUTH_TOKEN, which would stop npm from using OIDC.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-          registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      # Fails this job, and only this job, until the repository has a LICENSE and every package.json a
-      # `license` field. Pull requests are not affected. Also copies LICENSE into each package directory.
-      - name: Publish prerequisites (license)
-        run: bun scripts/prepare-publish.ts
+        run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Test
         run: |
@@ -97,8 +130,191 @@ jobs:
           bun run --filter @drophawk/mcp typecheck
           bun run --filter @drophawk/mcp test
 
-      - name: Publish unpublished versions
-        run: bun run release
+      # Fails this job until the repository has a LICENSE and every package.json a `license` field.
+      # Also copies LICENSE into each package directory, then rewrites `workspace:` ranges for the tarballs.
+      - id: pack
+        name: Pack tarballs for versions not yet released
+        run: |
+          bun scripts/prepare-publish.ts
+          bun run --filter @drophawk/sdk build
+          bun run --filter @drophawk/mcp build
+          bun scripts/resolve-workspace-deps.ts
+          bun scripts/pack-unpublished.ts release-tarballs
 
-      - name: Push release tags
-        run: git push origin --tags
+      - name: Upload tarballs
+        if: steps.pack.outputs.has-tarballs == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-tarballs
+          path: release-tarballs/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: build
+    if: github.repository == 'drophawk-net/drophawk-js' && needs.build.outputs.has-tarballs == 'true'
+    runs-on: ubuntu-latest
+    # The npm trusted publisher is configured for this environment name.
+    environment: npm
+    permissions:
+      contents: write # push release tags
+      id-token: write # npm trusted publishing
+    steps:
+      # Only for the commit to tag. No repository script runs in this job, and nothing is installed.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-tarballs
+          path: release-tarballs
+
+      # Trusted publishing needs npm >= 11.5.1 and Node >= 22.14. setup-node v7
+      # does not export a dummy NODE_AUTH_TOKEN, which would stop npm from using OIDC.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      # Each version is published and then tagged at once, so a partial success is durable: when a later tarball fails,
+      # the earlier ones are already on npm and tagged. On a rerun, a version already on npm with exactly this tarball's
+      # integrity is not published again but is still tagged; one on npm with different contents fails the job, because
+      # it cannot be republished and tagging this commit would be wrong. The token lives only in this step's environment,
+      # as a one-off request header for git. No credential is persisted in .git/config.
+      #
+      # The SDK is published before the MCP server, which depends on it; a package without a tarball (a release of only
+      # one of them) is skipped. npm runs in an empty temporary directory, so no .npmrc from the repository checkout can
+      # configure it; the checkout is used only by git, for tagging.
+      - name: Publish and tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          # Nothing this step runs may print a line the runner reads as a workflow command: tar, npm, git and openssl
+          # print text that a tarball or the registry controls. So all of the step's stdout and stderr go through quote(),
+          # which prefixes every line. The runner also ends a line at a lone CR, so CR, CRLF and the Unicode next-line,
+          # line and paragraph separators become LF first, and the legacy "##[command]" form, which works mid-line, is
+          # broken up. The step's own workflow commands go to fd 3, the unquoted output, and contain only fixed text and
+          # values validated below. The EXIT trap closes the quoted output and waits for quote() so no line is lost.
+          quote() {
+            tr '\r' '\n' | LC_ALL=C sed -e 's/\xC2\x85/\n/g' -e 's/\xE2\x80\xA8/\n/g' -e 's/\xE2\x80\xA9/\n/g' | LC_ALL=C sed -e 's/##\[/# #[/g' -e 's/^/  | /'
+          }
+          exec 3>&1
+          exec > >(quote) 2>&1
+          quoted=$!
+          trap 'exec >&- 2>&-; wait "$quoted"' EXIT
+
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth" >&3
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
+          shopt -s nullglob
+          tarballs="$PWD/release-tarballs"
+          repo="$PWD"
+          work="$(mktemp -d)"
+          cd "$work"
+
+          # Before publishing anything: every tarball must be the SDK or the MCP server, at most one of each, and its
+          # package.json must name exactly that package with a plain version that matches the file name.
+          declare -A ids=() paths=()
+          sdk_dependency=""
+          for file in "$tarballs"/*.tgz; do
+            case "$(basename "$file")" in
+              drophawk-sdk-[0-9]*.tgz) package=drophawk-sdk ;;
+              drophawk-mcp-[0-9]*.tgz) package=drophawk-mcp ;;
+              *)
+                echo "::error title=Unexpected tarball::release-tarballs holds a file that is neither the SDK nor the MCP server tarball; nothing was published." >&3
+                exit 1
+                ;;
+            esac
+            if [ -n "${paths[$package]:-}" ]; then
+              echo "::error title=Several tarballs::There is more than one $package tarball; nothing was published." >&3
+              exit 1
+            fi
+            name="@drophawk/${package#drophawk-}"
+            # Prints the version, and for the MCP server also the SDK version its dependency range was resolved from.
+            # shellcheck disable=SC2016 # the single-quoted script is JavaScript for node, not shell
+            if ! manifest="$(tar -xzOf "$file" package/package.json 2> /dev/null | EXPECTED="$name" node -e '
+                const p = JSON.parse(require("fs").readFileSync(0, "utf8"));
+                const semver = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/;
+                if (p.name !== process.env.EXPECTED || typeof p.version !== "string" || !semver.test(p.version)) process.exit(1);
+                let line = p.version;
+                if (p.name === "@drophawk/mcp") {
+                  const range = p.dependencies?.["@drophawk/sdk"];
+                  const m = typeof range === "string" ? /^[\^~]?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)$/.exec(range) : null;
+                  if (!m) process.exit(1);
+                  line += " " + m[1];
+                }
+                process.stdout.write(line);
+              ' 2> /dev/null)"; then
+              echo "::error title=Bad $package tarball::Its package.json does not name $name with a plain version (and, for the MCP server, a plain @drophawk/sdk range); nothing was published." >&3
+              exit 1
+            fi
+            read -r version dependency <<< "$manifest"
+            if [ "$(basename "$file")" != "$package-$version.tgz" ]; then
+              echo "::error title=Bad $package tarball::Its file name does not match the version in its package.json; nothing was published." >&3
+              exit 1
+            fi
+            if [ "$package" = drophawk-mcp ]; then sdk_dependency="$dependency"; fi
+            ids[$package]="$name@$version"
+            paths[$package]="$file"
+          done
+
+          # Prints the integrity npm has for a version, or nothing when npm does not have it. Any other failure makes it fail,
+          # which ends the job: it is only ever called in a plain assignment, under set -e. Diagnostics go to stderr.
+          # Its stdout is captured by the caller, so its error goes to fd 3 directly.
+          registry_integrity() {
+            local out
+            if out="$(npm view -- "$1" dist.integrity 2> npm-view.err)"; then
+              printf '%s' "$out"
+            elif grep -qE 'E404|404 Not Found' npm-view.err; then
+              :
+            else
+              cat npm-view.err >&2
+              echo "::error title=npm lookup failed::Could not look up $1 on the npm registry." >&3
+              return 1
+            fi
+          }
+
+          # The SDK first: the MCP server depends on it. A package without a tarball is not part of this release.
+          # Any failure ends the job at once, so nothing is published after a package that did not make it to npm.
+          sdk_released=""
+          for package in drophawk-sdk drophawk-mcp; do
+            if [ -z "${paths[$package]:-}" ]; then
+              echo "No tarball for $package; nothing to release for it"
+              continue
+            fi
+            id="${ids[$package]}"
+            tarball="${paths[$package]}"
+            if [ "$package" = drophawk-mcp ] && [ "$sdk_released" != "@drophawk/sdk@$sdk_dependency" ]; then
+              # Not released by this run: the SDK version the MCP server was built against must already be on npm.
+              sdk_on_npm="$(registry_integrity "@drophawk/sdk@$sdk_dependency")"
+              if [ -z "$sdk_on_npm" ]; then
+                echo "::error title=SDK not on npm::$id depends on @drophawk/sdk@$sdk_dependency, which is not on npm and was not released by this run; $id was not published." >&3
+                exit 1
+              fi
+            fi
+            integrity="sha512-$(openssl dgst -sha512 -binary "$tarball" | base64 -w0)"
+            published="$(registry_integrity "$id")"
+            if [ -z "$published" ]; then
+              echo "Publishing $id"
+              npm publish --access public -- "$tarball"
+            elif [ "$published" = "$integrity" ]; then
+              echo "$id is already on npm with this exact tarball; not publishing it again"
+            else
+              echo "npm has, for $id:"
+              printf '%s\n' "$published"
+              echo "::error title=$id already published::$id is on npm with different contents than this build ($integrity). It cannot be republished, and nothing after it is published; tag the commit it was published from by hand." >&3
+              exit 1
+            fi
+            if git -C "$repo" ls-remote --exit-code --tags origin "refs/tags/$id" > /dev/null; then
+              echo "Tag $id already exists"
+            else
+              git -C "$repo" tag "$id" "$GITHUB_SHA"
+              git -C "$repo" push origin "refs/tags/$id"
+            fi
+            if [ "$package" = drophawk-sdk ]; then sdk_released="$id"; fi
+          done

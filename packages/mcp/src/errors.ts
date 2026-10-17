@@ -1,4 +1,5 @@
 import { DropHawkError } from "@drophawk/sdk";
+import { reasonCode } from "./sanitize.js";
 
 /** What a tool returns when it fails: text for the model and `isError`, never a thrown exception. */
 export interface ToolError {
@@ -9,7 +10,9 @@ export interface ToolError {
 
 /**
  * Explains a failed API call to the model: what happened, and what to do about it.
- * Never includes raw API messages or stack traces, and never throws.
+ * Never includes raw API messages or stack traces, and never throws. Nothing the API sent is echoed except a reason that
+ * is a well-formed code (A-Z, 0-9 and _) and a max_identifiers that is a positive integer, so an error cannot carry text
+ * aimed at the model: it is shown outside the untrusted data block.
  */
 export function describeError(err: unknown): string {
   if (err instanceof DropHawkError) return describeApiError(err);
@@ -43,8 +46,10 @@ function describeApiError(err: DropHawkError): string {
     case "EMPTY_BATCH":
       return "No identifiers were given. Pass at least one model_slug or model number.";
     case "BATCH_TOO_LARGE": {
-      const max = err.metadata["max_identifiers"] ?? "50";
-      return `Too many identifiers in one call. Send at most ${max} and split the rest into further calls.`;
+      const max = positiveInteger(err.metadata["max_identifiers"]);
+      return max === undefined
+        ? "Too many identifiers in one call. Send fewer and split the rest into further calls."
+        : `Too many identifiers in one call. Send at most ${max} and split the rest into further calls.`;
     }
     case "REQUEST_TOO_LARGE":
       return "The request was too large. Send fewer identifiers or shorter text.";
@@ -60,22 +65,30 @@ function describeApiError(err: DropHawkError): string {
     default:
       return err.status >= 500
         ? "The DropHawk API is having trouble right now. Try again shortly."
-        : `DropHawk could not answer that request (${err.reason}). Check the input and try again.`;
+        : `DropHawk could not answer that request (${reasonCode(err.reason) ?? "an unrecognised reason"}). Check the input and try again.`;
   }
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  return typeof value === "string" && /^[1-9]\d{0,5}$/.test(value) ? Number(value) : undefined;
 }
 
 export function toolError(err: unknown): ToolError {
   return { content: [{ type: "text", text: describeError(err) }], isError: true };
 }
 
-/** Explains why one identifier of a batch has no Product. */
+/** Explains why one identifier of a batch has no Product. `reason` must already be a reasonCode() or UNKNOWN. */
 export function describeItemError(reason: string): string {
   switch (reason) {
     case "PRODUCT_NOT_FOUND":
       return "not found (DropHawk has no Product with this identifier; try search_products)";
     case "INVALID_IDENTIFIER":
       return "not a valid identifier (use a model_slug or model number of at most 256 bytes; a model number containing a slash must be given as its model_slug)";
+    case "INVALID_RESPONSE":
+      return "could not be looked up (the API sent a Product this server cannot show; try again later)";
+    case "UNKNOWN":
+      return "could not be looked up (an unrecognised reason)";
     default:
-      return `could not be looked up (${reason})`;
+      return `could not be looked up (${reasonCode(reason) ?? "an unrecognised reason"})`;
   }
 }

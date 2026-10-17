@@ -73,7 +73,26 @@ Every Product carries two links.
 When a Product has no best price, `buy_url` only opens the Product page, so the assistant is told to give `url` instead and to say the Product is out of stock if that is why.
 DropHawk never says which retailer has the best price, so the assistant is told not to guess one.
 
-Both are passed through exactly as the API gave them.
+Both are passed through exactly as the API gave them, and only when they are https links on drophawk.net in their exact canonical form; otherwise the answer says the link is unavailable.
+
+### Retailer text
+
+Product names, model numbers, Brand and Spec text come from retailers, so the server treats them as data, never as instructions.
+
+- Each value is flattened to one line, length-capped and markdown-escaped.
+- Invisible code points that could hide text or split a domain (variation selectors, Hangul fillers and other default-ignorable characters) are removed.
+- Web addresses inside it are defanged (`https://evil.example` becomes `https[:]//evil[.]example`), so they are never offered as links.
+  Lookalike dots, colons and slashes, punycode top-level domains and bare IPv4 addresses are covered too.
+  Percent-encoded and compatibility-character spellings are decoded for this check, repeatedly until nothing changes; text that never settles is shown as `(text withheld)`.
+- In the markdown, it sits between `BEGIN UNTRUSTED PRODUCT DATA <nonce>` and `END UNTRUSTED PRODUCT DATA <nonce>` lines.
+  The nonce is random for every response, so retailer text cannot forge the end of the block.
+- Daily lows whose date, amount or currency is malformed are dropped, and the answer says how many.
+- Reason codes from the API (errors, withheld prices) are shown only when they are well-formed codes such as `NO_DATA`; anything else becomes `UNKNOWN` or a fixed message.
+- Identifiers (`model_slug`, model numbers, Brand and ComponentType slugs, and the identifiers you asked for) are never shortened or rewritten, because they are passed back to the API.
+  They are shown in code spans, and a Product whose `model_slug` is not a single line of at most 256 UTF-8 bytes is left out.
+  A batch answer that does not have one result per identifier asked is reported as `INVALID_RESPONSE` for each of them.
+- Numbers the API sends that are not finite (or a stock count that is not a whole number) are left out, so an answer always matches its output schema.
+- Links are accepted on any subdomain of drophawk.net, not only on `drophawk.net` and `go.drophawk.net`, so the trust in a link rests on DropHawk controlling every subdomain of drophawk.net.
 
 ### What DropHawk does not know
 
@@ -138,11 +157,11 @@ The release workflow rewrites the `workspace:` range on `@drophawk/sdk` to a rea
 This is a one-off step for a human who owns the `@drophawk` npm organisation.
 No agent or workflow does it.
 
-Prerequisites, both already met (the same as the SDK's):
+Prerequisites (the same as the SDK's):
 
 - The repository is MIT licensed.
 - The GitHub repository, `drophawk-net/drophawk-js`, is public.
-  Trusted publishing only attests provenance for public repositories.
+  It is private until it is deliberately made public, and trusted publishing only attests provenance for public repositories, so make it public before the first automated release.
 
 npm packs a `LICENSE` file automatically once it exists in the package directory.
 The root `LICENSE` is the single source, so `scripts/prepare-publish.ts` copies it into each package directory at publish time (the copies are gitignored, never committed).
@@ -166,5 +185,8 @@ Publish from a throwaway checkout after the rewrite:
 4. Still in `packages/mcp`, run `npm publish --provenance=false`, signing in with 2FA.
    This publishes the real `0.1.0` as `latest`; the `prepack` script builds it first.
    Provenance is off only because a local publish cannot produce it; trusted publishing adds it from the next release on.
-5. On npmjs.com open `@drophawk/mcp` > Settings > Trusted Publisher, choose GitHub Actions, and enter organization or user `drophawk-net`, repository `drophawk-js`, workflow filename `release.yml`, and no environment.
-6. Tag the release that the workflow could not: `git tag @drophawk/mcp@0.1.0 <version-commit>` and `git push origin @drophawk/mcp@0.1.0`.
+5. On npmjs.com open `@drophawk/mcp` > Settings > Trusted Publisher, choose GitHub Actions, and enter organization or user `drophawk-net`, repository `drophawk-js`, workflow filename `release.yml`, and environment `npm`.
+   The publish job runs in the GitHub environment `npm`, and npm rejects the token exchange if the two names differ.
+6. In the package's publishing access settings, choose "Require two-factor authentication and disallow tokens".
+   This is mandatory, not optional: it leaves trusted publishing as the only way to publish.
+7. Tag the release that the workflow could not: `git tag @drophawk/mcp@0.1.0 <version-commit>` and `git push origin @drophawk/mcp@0.1.0`.

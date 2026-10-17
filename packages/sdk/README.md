@@ -74,6 +74,8 @@ The SDK follows that redirect for you, so `getProduct` returns the surviving Pro
 To find out whether an identifier you stored is stale, compare it with `(await dh.getProduct(identifier)).model_slug`.
 `getDailyLows` follows the redirect too but its response does not name the Product, so call `getProduct` when you need the canonical slug.
 In a batch there is no redirect: the result has `merged: true` and `product` is the survivor, which is the signal to rely on.
+The batch request is sent with `redirect: "manual"`, so its body is never resent elsewhere, and a redirect in answer to it is `INVALID_RESPONSE`.
+Any request whose final URL is on another origin than `baseUrl` is `INVALID_RESPONSE` too.
 
 ### Batches
 
@@ -201,16 +203,16 @@ Never edit `CHANGELOG.md` or the version by hand.
 
 ### First publish (one-off, human)
 
-Publishing runs through npm trusted publishing (OIDC, no token); npm adds provenance automatically when the repository is public.
+Publishing runs through npm trusted publishing (OIDC, no token); npm adds provenance automatically once the repository is public.
 npm configures a trusted publisher from the package's settings page on npmjs.com, so the package has to exist first.
 
-Prerequisites, both already met:
+Prerequisites:
 
 - The repository is MIT licensed.
   `scripts/prepare-publish.ts` copies the root `LICENSE` into each package directory at publish time (npm then packs it automatically; the copies are gitignored), and the release workflow's publish job fails before publishing if the `LICENSE` or either `license` field is missing.
   Run the script yourself before a manual publish.
 - The GitHub repository, `drophawk-net/drophawk-js`, is public.
-  Trusted publishing only attests provenance for public repositories.
+  It is private until it is deliberately made public, and trusted publishing only attests provenance for public repositories, so make it public before the first automated release.
 
 Then, as an owner of the `@drophawk` npm organisation:
 
@@ -220,9 +222,11 @@ Then, as an owner of the `@drophawk` npm organisation:
 2. From `main` at the version commit, run `bun install` and then, in `packages/sdk`, `npm publish --provenance=false`, signing in with 2FA.
    This publishes the real `0.1.0` as `latest`; the `prepack` script builds it first.
    Provenance is off only because a local publish cannot produce it.
-3. On npmjs.com open `@drophawk/sdk` > Settings > Trusted Publisher, choose GitHub Actions, and enter organization or user `drophawk-net`, repository `drophawk-js`, workflow filename `release.yml`, and no environment.
+3. On npmjs.com open `@drophawk/sdk` > Settings > Trusted Publisher, choose GitHub Actions, and enter organization or user `drophawk-net`, repository `drophawk-js`, workflow filename `release.yml`, and environment `npm`.
+   The publish job runs in the GitHub environment `npm`, and npm rejects the token exchange if the two names differ.
 4. Tag the release that the workflow could not: `git tag @drophawk/sdk@0.1.0 <version-commit>` and `git push origin @drophawk/sdk@0.1.0`.
-5. Optionally, in the package's publishing access settings, require 2FA and disallow tokens.
+5. In the package's publishing access settings, choose "Require two-factor authentication and disallow tokens".
+   This is mandatory, not optional: it leaves trusted publishing as the only way to publish.
 
 From the next release on, merging the version PR publishes automatically.
 The workflow runs Node 24, whose npm supports trusted publishing (npm 11.5.1 or later).

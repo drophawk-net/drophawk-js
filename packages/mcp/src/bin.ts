@@ -16,6 +16,11 @@ process.on("uncaughtException", (err) => {
 
 const baseUrl = process.env["DROPHAWK_API_BASE_URL"]?.trim() || undefined;
 
+if (baseUrl) {
+  // Everything the model sees comes from this host, so pointing it elsewhere is a trust decision the person should see.
+  console.error(`drophawk-mcp: warning: DROPHAWK_API_BASE_URL is set; using ${baseUrl} instead of the production API. Only do this for development or a gateway you trust.`);
+}
+
 serveStdio(() => createServer({ baseUrl }), {
   onerror: (err) => console.error("drophawk-mcp:", err),
 });

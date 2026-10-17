@@ -90,7 +90,7 @@ export class DropHawkError extends Error {
   static async fromResponse(response: Response): Promise<DropHawkError> {
     // Reading the body may fail for reasons that are not ours to hide (an abort, a dropped connection): let those through.
     // Only a body that is not valid JSON falls back to an error derived from the status.
-    const text = await response.text();
+    const text = await readBodyText(response);
     let body: unknown;
     try {
       body = JSON.parse(text);
@@ -137,8 +137,58 @@ function findErrorInfo(body: unknown): ErrorInfo | undefined {
   return undefined;
 }
 
-function parseSeconds(value: string | null | undefined): number | undefined {
-  if (value == null || value.trim() === "") return undefined;
-  const n = Number(value);
+/** Accepts the string forms of the header and metadata, and a plain number in case the API ever sends one as JSON. */
+function parseSeconds(value: unknown): number | undefined {
+  let n: number;
+  if (typeof value === "number") n = value;
+  else if (typeof value === "string" && value.trim() !== "") n = Number(value);
+  else return undefined;
   return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+/** The most response body the SDK will read, for answers and errors alike. The API's largest answer is far smaller. */
+export const MAX_BODY_BYTES = 8 * 1024 * 1024;
+
+function tooLarge(status: number): DropHawkError {
+  return new DropHawkError({ status, reason: "INVALID_RESPONSE", message: `DropHawk API returned a body larger than ${MAX_BODY_BYTES} bytes; refusing to read it` });
+}
+
+/**
+ * @internal Cancels a body that will not be read, without waiting: when the caller's fetch kept an unread clone, the cancel
+ * only settles once that clone is cancelled too, so awaiting it could hang the call forever.
+ */
+export function discard(body: ReadableStream<Uint8Array> | null): void {
+  if (body) void body.cancel().catch(() => undefined);
+}
+
+/**
+ * @internal Reads a response body as text, stopping at {@link MAX_BODY_BYTES}.
+ * Read failures (an abort, a dropped connection) propagate untouched; an oversized body is INVALID_RESPONSE.
+ */
+export async function readBodyText(response: Response): Promise<string> {
+  const declared = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+    discard(response.body);
+    throw tooLarge(response.status);
+  }
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let total = 0;
+  let text = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_BODY_BYTES) {
+        void reader.cancel().catch(() => undefined);
+        throw tooLarge(response.status);
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return text + decoder.decode();
 }

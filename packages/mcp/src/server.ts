@@ -1,4 +1,4 @@
-import { DropHawk, type DropHawkOptions } from "@drophawk/sdk";
+import { DropHawk, DropHawkError, type DropHawkOptions } from "@drophawk/sdk";
 import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import { describeError, toolError } from "./errors.js";
@@ -13,7 +13,7 @@ import {
   toProductOutput,
 } from "./format.js";
 import { utf8Text } from "./input.js";
-import { batchOutputSchema, dailyLowsOutputSchema, searchOutputSchema } from "./output.js";
+import { batchOutputSchema, dailyLowsOutputSchema, searchOutputSchema, type ProductOutput } from "./output.js";
 import { DAILY_LOWS_DESCRIPTION, GET_PRODUCTS_DESCRIPTION, INSTRUCTIONS, SEARCH_DESCRIPTION } from "./copy.js";
 import { VERSION } from "./version.js";
 
@@ -70,12 +70,12 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       try {
         const page = await catalogue.searchProducts({ query, page_size: limit }, { signal: ctx.mcpReq.signal });
         // Hold the caller's limit even if the API returns more.
-        const products = page.products.slice(0, limit).map(toProductOutput);
+        const products = page.products
+          .slice(0, limit)
+          .map(toProductOutput)
+          .filter((p): p is ProductOutput => p !== undefined);
         const hasMore = page.next_page_token !== "" || page.products.length > limit;
-        return {
-          content: [{ type: "text" as const, text: searchMarkdown(query, products, hasMore) }],
-          structuredContent: { query, products, has_more: hasMore },
-        };
+        return answer(searchOutputSchema, { query, products, has_more: hasMore }, () => searchMarkdown(query, products, hasMore));
       } catch (err) {
         return toolError(err);
       }
@@ -99,8 +99,8 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
     },
     async ({ identifiers }, ctx) => {
       try {
-        const out = toBatchOutput(await catalogue.getProducts(identifiers, { signal: ctx.mcpReq.signal }));
-        return { content: [{ type: "text" as const, text: batchMarkdown(out) }], structuredContent: out };
+        const out = toBatchOutput(await catalogue.getProducts(identifiers, { signal: ctx.mcpReq.signal }), identifiers);
+        return answer(batchOutputSchema, out, () => batchMarkdown(out));
       } catch (err) {
         return toolError(err);
       }
@@ -121,7 +121,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
     async ({ identifier }, ctx) => {
       try {
         const out = toDailyLowsOutput(identifier, await catalogue.getDailyLows(identifier, { signal: ctx.mcpReq.signal }));
-        return { content: [{ type: "text" as const, text: dailyLowsMarkdown(out) }], structuredContent: out };
+        return answer(dailyLowsOutputSchema, out, () => dailyLowsMarkdown(out));
       } catch (err) {
         return toolError(err);
       }
@@ -163,4 +163,16 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   );
 
   return server;
+}
+
+/**
+ * A tool result, checked against its output schema here first. The MCP SDK would otherwise reject a non-conforming result
+ * with an error that names the offending field, outside the untrusted data block; API data must never be able to cause that.
+ */
+function answer<T extends Record<string, unknown>>(schema: z.ZodType<T>, structured: T, text: () => string) {
+  if (!schema.safeParse(structured).success) {
+    console.error("drophawk-mcp: an answer built from API data did not match its output schema; it is not returned");
+    return toolError(new DropHawkError({ status: 200, reason: "INVALID_RESPONSE", message: "output schema mismatch" }));
+  }
+  return { content: [{ type: "text" as const, text: text() }], structuredContent: structured };
 }
