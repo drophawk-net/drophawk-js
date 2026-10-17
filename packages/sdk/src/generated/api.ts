@@ -12,11 +12,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * ListBrands
-         * @description List every Brand that has at least one Product. A Brand with no Products is
-         *      not listed.
+         * List every Brand that has at least one Product.
+         * @description A Brand with no Products is left out.
          */
-        get: operations["CatalogService_ListBrands"];
+        get: operations["listBrands"];
         put?: never;
         post?: never;
         delete?: never;
@@ -33,15 +32,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List every ComponentType: the classes of product DropHawk tracks, such as
-         *      graphics cards or CPUs.
-         * @description Each entry carries the schema of the Specs its Products can have, which is
-         *      the contract for the keys and value types of Product.specs: every key a
-         *      Product returns in specs is declared in the spec_schema of its
-         *      ComponentType, with a matching type. A ComponentType with no Products is
-         *      still listed, with a product_count of 0.
+         * List every ComponentType, including those with no Products.
+         * @description spec_schema declares every key and value type a Product's specs may hold.
          */
-        get: operations["CatalogService_ListComponentTypes"];
+        get: operations["listComponentTypes"];
         put?: never;
         post?: never;
         delete?: never;
@@ -60,30 +54,12 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Get many Products in one call, such as the parts of a basket.
-         * @description Send up to 50 identifiers, each a model_slug or a raw model number exactly
-         *      as GET /v1/products/{model_slug} accepts it. The response has one result
-         *      per identifier you sent, in the order you sent them, so results[i] answers
-         *      identifiers[i]. Duplicates are answered once each and are not an error.
-         *      Every found Product is the same message GET /v1/products/{model_slug}
-         *      returns, pricing included.
+         * Get up to 50 Products in one call.
+         * @description Each identifier is resolved as in GET /v1/products/{identifier}, and results[i] answers identifiers[i]. An identifier that cannot be resolved fails only its own result, so check each result, not the HTTP status. A merged Product resolves to its survivor with is_merged set, not a redirect. The batch counts as one request against the rate limit.
          *
-         *      An identifier that cannot be answered does not fail the call: its result
-         *      carries no product and an error whose reason is PRODUCT_NOT_FOUND or
-         *      INVALID_IDENTIFIER, the reasons the single GET would have raised. Branch on
-         *      each result, not on the HTTP status, which is 200 whenever the request
-         *      itself was acceptable.
-         *
-         *      A Product that was merged into another resolves to the surviving Product
-         *      here, with no redirect: its result has merged true and a product whose
-         *      model_slug is the survivor's. Store that model_slug.
-         *
-         *      A request with no identifiers answers 400 with reason EMPTY_BATCH, and one
-         *      with more than 50 answers 400 with reason BATCH_TOO_LARGE; neither is
-         *      partly served. The whole batch counts as one request against the rate limit,
-         *      and, like every POST, its response is Cache-Control: no-store.
+         *     Connect callers may also GET it, but should POST large batches: a GET carries the batch in its URL, which can outgrow URL limits, and its response, per-item errors included, is cached publicly for 5 minutes.
          */
-        post: operations["ProductService_BatchGetProducts"];
+        post: operations["batchGetProducts"];
         delete?: never;
         options?: never;
         head?: never;
@@ -99,25 +75,11 @@ export interface paths {
         };
         /**
          * Search Products by text.
-         * @description q is matched against each Product's name, Brand name and model number,
-         *      tolerating typos, case and punctuation, and results come best match first.
-         *      Only listed Products are searched. A q with no matches is not an error: it
-         *      returns an empty products list.
+         * @description q is matched against name, Brand name and model number, tolerating typos, case and punctuation. Results come best match first; no match is an empty list.
          *
-         *      Results are paginated. A response with more matches than page_size carries
-         *      a next_page_token; send it back as page_token, with the same q, to get the
-         *      following page. The last page has an empty next_page_token. Pages do not
-         *      overlap and skip nothing while the catalog is unchanged; a Product added or
-         *      removed between two requests can shift what a later page holds. A
-         *      page_token is opaque, and only valid for the q it was issued for.
-         *
-         *      Each Product is the same message GET /v1/products/{model_slug} returns,
-         *      pricing included. A blank or malformed q answers 400 with reason
-         *      INVALID_QUERY, a page_token that cannot be used answers 400 with reason
-         *      INVALID_PAGE_TOKEN, and a negative page_size answers 400 with reason
-         *      INVALID_PAGE_SIZE.
+         *     To page, send next_page_token back as page_token with the same q; page_size may change between pages. Pages neither overlap nor skip while the catalog is unchanged.
          */
-        get: operations["ProductService_SearchProducts"];
+        get: operations["searchProducts"];
         put?: never;
         post?: never;
         delete?: never;
@@ -126,7 +88,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/products/{model_slug}": {
+    "/v1/products/{identifier}": {
         parameters: {
             query?: never;
             header?: never;
@@ -134,21 +96,12 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get one Product by its model_slug.
-         * @description The identifier may also be the Product's raw model number as a store or the
-         *      manufacturer writes it, for example "Deco X1500(1-pack)" (percent-encoded
-         *      in the path). DropHawk maps it to a model_slug with its own rule, so do not
-         *      assume which spellings it treats as the same: the response names the
-         *      canonical model_slug, which is the value to store. A model number
-         *      containing "/" cannot be sent this way, because a path segment cannot carry
-         *      it even percent-encoded; send its model_slug instead.
+         * Get a Product by model_slug or model number.
+         * @description identifier is a model_slug, or a model number as a Retailer or the manufacturer writes it, percent-encoded. Store the model_slug in the response; never derive one. A model number containing "/" cannot travel in a path; send its model_slug.
          *
-         *      A Product that was found to duplicate another and merged into it answers
-         *      301 Moved Permanently with a Location header naming the surviving Product's
-         *      URL; follow it. A Product DropHawk does not know, or no longer lists,
-         *      answers 404 with reason PRODUCT_NOT_FOUND.
+         *     A Product merged into another answers 301, with Location naming the survivor.
          */
-        get: operations["ProductService_GetProduct"];
+        get: operations["getProduct"];
         put?: never;
         post?: never;
         delete?: never;
@@ -157,7 +110,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/products/{model_slug}/daily-lows": {
+    "/v1/products/{identifier}/daily-lows": {
         parameters: {
             query?: never;
             header?: never;
@@ -166,36 +119,11 @@ export interface paths {
         };
         /**
          * Get a Product's daily lows over the last 30 days.
-         * @description Each point is the lowest price DropHawk observed for the Product on one
-         *      UTC calendar day, across all of its stores, whether or not a store had it
-         *      in stock. It is not a history of best_price, which counts in-stock stores
-         *      alone and is the price now: today's point can sit below today's
-         *      best_price, and a day on which only an out-of-stock store was observed
-         *      still has a point. A day on which no store was observed has no point, so
-         *      the series can be sparse.
+         * @description A daily low is the lowest price seen on one UTC day across all Retailers, in stock or not, so it is not a history of best_price. Days with no observation have no point.
          *
-         *      The window is the current UTC day and the 29 before it. When the Product
-         *      has an earlier point, the most recent one is also returned, marked
-         *      is_carried_forward, so a Product last priced two months ago still has a
-         *      price to chart. Draw it as the price in force at the window's start, and
-         *      clip the line to the window.
-         *
-         *      Prices in different currencies cannot be ranked against each other, so
-         *      when the points in this series (the window and its carried-forward point)
-         *      span more than one currency the series is withheld: points is empty and
-         *      withheld_reason is "MIXED_CURRENCY". A Product with no history has an empty
-         *      points list and withheld_reason "NO_DATA". These are the reasons of
-         *      ProductPricing.all_time_low_withheld_reason, but judged on this series
-         *      alone: an old price in another currency, outside the series, does not
-         *      withhold it.
-         *
-         *      The identifier is resolved exactly as for GET /v1/products/{model_slug},
-         *      and so is a Product that was merged into another: 301 Moved Permanently
-         *      with a Location header naming this endpoint for the surviving Product;
-         *      follow it. A Product DropHawk does not know, or no longer lists, answers
-         *      404 with reason PRODUCT_NOT_FOUND.
+         *     The window is today (UTC) and the 29 days before, starting at window_start. If an earlier point exists, the latest one is included with is_carried_forward set, so a chart can start at the window's first day. Identifiers and merges are handled as in GET /v1/products/{identifier}.
          */
-        get: operations["ProductService_GetProductDailyLows"];
+        get: operations["getProductDailyLows"];
         put?: never;
         post?: never;
         delete?: never;
@@ -208,688 +136,117 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /**
-         * BatchGetProductsRequest
-         * @description BatchGetProductsRequest names the Products to get.
-         */
-        "drophawk.developer.v1.BatchGetProductsRequest": {
-            /**
-             * client
-             * @description Which DropHawk surface is asking, so the buy_url it receives is attributed
-             *      to that surface. "mcp" is honoured: the DropHawk MCP server sends it. Any
-             *      other value, or none, means the API itself. The SDK sends nothing. It
-             *      changes only buy_url, and nothing else about the response.
-             *
-             *      Never rewrite a buy_url you were given: use it as is.
-             */
+        /** @description BatchGetProductsRequest names the Products to get. */
+        BatchGetProductsRequest: {
+            /** @description Set to "mcp" only by the DropHawk MCP server, to attribute the links it hands out. Leave it unset; any other value is treated as unset. */
             client?: "mcp" | (string & {});
-            /**
-             * identifiers
-             * @description The Products to get, each a model_slug or a raw model number. At least 1
-             *      and at most 50; each at most 256 bytes. An identifier that is blank, too
-             *      long or has control characters gets an INVALID_IDENTIFIER result without
-             *      failing the others.
-             */
+            /** @description 1 to 50 model_slugs or model numbers. An invalid one fails only its own result, with INVALID_IDENTIFIER. */
             identifiers: string[];
         };
-        /**
-         * BatchGetProductsResponse
-         * @description BatchGetProductsResponse answers a batch, one result per identifier.
-         */
-        "drophawk.developer.v1.BatchGetProductsResponse": {
-            /**
-             * results
-             * @description One result for each requested identifier, in the order requested, so
-             *      results[i] answers identifiers[i]. Always the same length as the request.
-             */
-            results: components["schemas"]["drophawk.developer.v1.ProductResult"][];
+        /** @description BatchGetProductsResponse answers a batch, one result per identifier. */
+        BatchGetProductsResponse: {
+            /** @description One result per identifier, in request order. */
+            results: components["schemas"]["ProductResult"][];
         };
-        /**
-         * Brand
-         * @description Brand is a maker of Products, with how many Products it has.
-         */
-        "drophawk.developer.v1.Brand": {
+        /** @description BestPrice is a Product's lowest current in-stock price. */
+        BestPrice: {
             /**
-             * name
-             * @description The Brand's display name, for example "ASUS".
+             * Format: date-time
+             * @description When a Retailer last confirmed this price.
              */
+            observed_at: string;
+            /** @description The price. */
+            price: components["schemas"]["Money"];
+        };
+        /** @description Brand is a maker of Products, with how many Products it has. */
+        Brand: {
+            /** @description The Brand's display name, for example "ASUS". */
             name: string;
             /**
-             * product_count
              * Format: int32
-             * @description How many Products the Brand has that DropHawk lists. Products that have
-             *      been removed from the catalog do not count.
+             * @description Number of Products of this Brand in the catalog.
              */
             product_count: number;
-            /**
-             * slug
-             * @description The Brand's stable, URL-safe identifier: lowercase letters, digits and
-             *      hyphens only, for example "asus". It is the slug that BrandRef.slug
-             *      carries on a Product.
-             */
+            /** @description Stable URL-safe identifier, for example "asus". */
             slug: string;
         };
-        /**
-         * BrandRef
-         * @description BrandRef names the maker of a Product.
-         */
-        "drophawk.developer.v1.BrandRef": {
-            /**
-             * name
-             * @description The Brand's display name, for example "ASUS".
-             */
+        /** @description BrandRef names the maker of a Product. */
+        BrandRef: {
+            /** @description The Brand's display name, for example "ASUS". */
             name: string;
-            /**
-             * slug
-             * @description The Brand's stable, URL-safe identifier: lowercase letters, digits and
-             *      hyphens only, for example "asus". Use it to refer to the Brand; it never
-             *      needs escaping in a URL.
-             */
+            /** @description Stable URL-safe identifier, for example "asus". */
             slug: string;
         };
-        /**
-         * ComponentType
-         * @description ComponentType is a class of product with the schema of the Specs its
-         *      Products can carry.
-         */
-        "drophawk.developer.v1.ComponentType": {
-            /**
-             * name
-             * @description The ComponentType's display name, for example "Graphics Cards".
-             */
+        /** @description ComponentType is a class of product and the Spec schema its Products follow. */
+        ComponentType: {
+            /** @description The ComponentType's display name, for example "Graphics Cards". */
             name: string;
             /**
-             * product_count
              * Format: int32
-             * @description How many Products of this class DropHawk lists. Products that have been
-             *      removed from the catalog do not count.
+             * @description Number of Products of this type in the catalog.
              */
             product_count: number;
-            /**
-             * slug
-             * @description The ComponentType's stable, URL-safe identifier: lowercase letters, digits
-             *      and hyphens only, for example "gpu". It is the slug that
-             *      ComponentTypeRef.slug carries on a Product.
-             */
+            /** @description Stable URL-safe identifier, for example "gpu". */
             slug: string;
-            /**
-             * spec_schema
-             * @description The Specs a Product of this class can have, in display order. A Product's
-             *      specs map only ever uses keys listed here, each holding the kind of value
-             *      declared here. Always present; empty for a class with no Specs.
-             */
-            spec_schema: components["schemas"]["drophawk.developer.v1.SpecField"][];
+            /** @description The Specs this type's Products may have, in display order. */
+            spec_schema: components["schemas"]["SpecField"][];
         };
-        /**
-         * ComponentTypeRef
-         * @description ComponentTypeRef names the class of product a Product belongs to, such as a
-         *      graphics card or a CPU. The ComponentType decides which Specs its Products
-         *      can carry.
-         */
-        "drophawk.developer.v1.ComponentTypeRef": {
-            /**
-             * name
-             * @description The ComponentType's display name, for example "Graphics Cards".
-             */
+        /** @description ComponentTypeRef names a Product's ComponentType, such as graphics cards. */
+        ComponentTypeRef: {
+            /** @description The ComponentType's display name, for example "Graphics Cards". */
             name: string;
-            /**
-             * slug
-             * @description The ComponentType's stable, URL-safe identifier: lowercase letters, digits
-             *      and hyphens only, for example "gpu".
-             */
+            /** @description Stable URL-safe identifier, for example "gpu". */
             slug: string;
         };
-        /**
-         * DailyLow
-         * @description DailyLow is the lowest price observed for a Product on one day.
-         *
-         *      It is the lowest across all of the Product's stores, in stock or not, so it
-         *      is not a history of ProductPricing.best_price.
-         */
-        "drophawk.developer.v1.DailyLow": {
+        /** @description DailyLow is a Product's lowest price on one UTC day across all Retailers, in stock or not. */
+        DailyLow: {
             /**
-             * date
              * Format: date
-             * @description The day, as an ISO 8601 calendar date (YYYY-MM-DD) in UTC.
+             * @description The UTC calendar date.
              */
             date: string;
-            /**
-             * is_carried_forward
-             * @description True for the one point that falls before the 30-day window: the most recent
-             *      earlier day with a price, included so a Product that has not been priced
-             *      inside the window still has a price to chart. It is the price in force when
-             *      the window opened, not an observation inside it. False for every point
-             *      inside the window.
-             */
+            /** @description True only for the point before the window: the latest earlier price, in force when the window opens. */
             is_carried_forward: boolean;
-            /**
-             * price
-             * @description The lowest price observed on that day.
-             */
-            price: components["schemas"]["drophawk.developer.v1.Money"];
+            /** @description The lowest price that day. */
+            price: components["schemas"]["Money"];
         };
-        /**
-         * DatedPrice
-         * @description DatedPrice is a price together with the calendar day it was observed on.
-         */
-        "drophawk.developer.v1.DatedPrice": {
+        /** @description DatedPrice is a price and the UTC date it was observed. */
+        DatedPrice: {
             /**
-             * date
              * Format: date
-             * @description The day, as an ISO 8601 calendar date (YYYY-MM-DD) in UTC.
+             * @description The UTC calendar date.
              */
             date: string;
-            /**
-             * price
-             * @description The price observed on that day.
-             */
-            price: components["schemas"]["drophawk.developer.v1.Money"];
+            /** @description The price. */
+            price: components["schemas"]["Money"];
         };
-        /**
-         * GetProductDailyLowsRequest
-         * @description GetProductDailyLowsRequest names the Product whose daily lows to get.
-         */
-        "drophawk.developer.v1.GetProductDailyLowsRequest": {
+        /** @description An error response, in the shape of a google.rpc.Status. */
+        Error: {
             /**
-             * model_slug
-             * @description The Product's model_slug, or its raw model number. At most 256 bytes.
-             */
-            model_slug: string;
-        };
-        /**
-         * GetProductDailyLowsResponse
-         * @description GetProductDailyLowsResponse is a Product's daily lows over the last 30 days.
-         */
-        "drophawk.developer.v1.GetProductDailyLowsResponse": {
-            /**
-             * points
-             * @description One point per UTC day on which a price was observed, oldest first. Always
-             *      present; empty when withheld, and when the Product has no history.
-             */
-            points: components["schemas"]["drophawk.developer.v1.DailyLow"][];
-            /**
-             * withheld_reason
-             * @description Why points is empty, and itself absent when points is not: "NO_DATA" when
-             *      DropHawk has no price history for the Product, or "MIXED_CURRENCY" when the
-             *      points in this series span more than one currency. More may be added within v1; treat an
-             *      unrecognised reason as the series being unknown.
-             */
-            withheld_reason?: "NO_DATA" | "MIXED_CURRENCY" | (string & {});
-        };
-        /**
-         * GetProductRequest
-         * @description GetProductRequest names the Product to get.
-         */
-        "drophawk.developer.v1.GetProductRequest": {
-            /**
-             * client
-             * @description Which DropHawk surface is asking, so the buy_url it receives is attributed
-             *      to that surface. "mcp" is honoured: the DropHawk MCP server sends it. Any
-             *      other value, or none, means the API itself. The SDK sends nothing. It
-             *      changes only buy_url, and nothing else about the response.
-             *
-             *      Never rewrite a buy_url you were given: use it as is.
-             */
-            client?: "mcp" | (string & {});
-            /**
-             * model_slug
-             * @description The Product's model_slug, or its raw model number. At most 256 bytes.
-             */
-            model_slug: string;
-        };
-        /**
-         * GetProductResponse
-         * @description GetProductResponse carries the requested Product. Over HTTP/JSON the response
-         *      body is the Product itself.
-         */
-        "drophawk.developer.v1.GetProductResponse": {
-            /**
-             * product
-             * @description The Product. Where HTTP/JSON answers a merged Product with a redirect, an
-             *      RPC client receives the surviving Product here instead, and can tell by its
-             *      model_slug differing from the one requested.
-             */
-            product: components["schemas"]["drophawk.developer.v1.Product"];
-        };
-        /**
-         * ListBrandsRequest
-         * @description ListBrandsRequest takes no parameters.
-         */
-        "drophawk.developer.v1.ListBrandsRequest": Record<string, never>;
-        /**
-         * ListBrandsResponse
-         * @description ListBrandsResponse lists every Brand that has Products.
-         */
-        "drophawk.developer.v1.ListBrandsResponse": {
-            /**
-             * brands
-             * @description The Brands, ordered by name.
-             */
-            brands: components["schemas"]["drophawk.developer.v1.Brand"][];
-        };
-        /**
-         * ListComponentTypesRequest
-         * @description ListComponentTypesRequest takes no parameters.
-         */
-        "drophawk.developer.v1.ListComponentTypesRequest": Record<string, never>;
-        /**
-         * ListComponentTypesResponse
-         * @description ListComponentTypesResponse lists every ComponentType.
-         */
-        "drophawk.developer.v1.ListComponentTypesResponse": {
-            /**
-             * component_types
-             * @description The ComponentTypes, ordered by name.
-             */
-            component_types: components["schemas"]["drophawk.developer.v1.ComponentType"][];
-        };
-        /**
-         * Money
-         * @description Money is an amount in a single currency.
-         *
-         *      Amounts in different currencies are never compared or combined by this API.
-         *      Wherever a value would have to rank prices in more than one currency, it is
-         *      withheld instead, and a withheld reason beside it says so.
-         */
-        "drophawk.developer.v1.Money": {
-            /**
-             * amount
-             * @description The amount as a non-negative decimal string with exactly two decimal
-             *      places, a "." separator and no digit grouping, for example "1299.00". It is
-             *      a string rather than a JSON number so the value is exact; parse it with a
-             *      decimal type, not a binary float.
-             */
-            amount: string;
-            /**
-             * currency
-             * @description The ISO 4217 three-letter currency code, for example "AUD".
-             */
-            currency: string;
-        };
-        /**
-         * Product
-         * @description Product is one physical part at the manufacturer-SKU level, identified by its
-         *      model number, together with what DropHawk currently knows about its price.
-         *
-         *      A Product is independent of where it is sold. Prices are aggregated across
-         *      every store DropHawk tracks for it; this API does not name the stores.
-         */
-        "drophawk.developer.v1.Product": {
-            /**
-             * brand
-             * @description The Product's maker.
-             */
-            brand: components["schemas"]["drophawk.developer.v1.BrandRef"];
-            /**
-             * buy_url
-             * Format: uri
-             * @description A link that sends a buyer to wherever the Product currently has its
-             *      best_price, chosen when the link is followed rather than when this
-             *      response was produced, so it stays right however long it is kept; it
-             *      sends the buyer to the Product's page instead when the Product has no
-             *      best_price at that moment. Always present, whether or not the Product has a
-             *      best_price now. It is on DropHawk's own redirector and never names a
-             *      Retailer, so it is the only way to send a buyer onward from this API.
-             *
-             *      The link carries a src and rep query: src says which DropHawk surface
-             *      handed it out, "api" by default and "mcp" when the request sent client=mcp;
-             *      rep is "json", a machine-readable API response (JSON or binary). Use the
-             *      link exactly as given, and never rewrite it. Following it may be answered
-             *      with 404 if the Product has since been removed.
-             *
-             *      Attribution stops at the Product page: when the link lands there because
-             *      the Product has no best_price, no click toward a Retailer is recorded.
-             */
-            buy_url: string;
-            /**
-             * component_type
-             * @description The class of product this is, which decides the keys in specs.
-             */
-            component_type: components["schemas"]["drophawk.developer.v1.ComponentTypeRef"];
-            /**
-             * images
-             * @description Images of the Product, primary image first. Always present; empty when
-             *      DropHawk has none.
-             */
-            images: components["schemas"]["drophawk.developer.v1.ProductImage"][];
-            /**
-             * model_number
-             * @description The manufacturer's model number as DropHawk records it, for display.
-             */
-            model_number: string;
-            /**
-             * model_slug
-             * @description The Product's identifier: the URL-safe canonical form of its model number,
-             *      lowercase letters, digits and hyphens only, for example "deco-x1500-1-pack"
-             *      for the model number "Deco X1500(1-pack)". DropHawk derives it, and the
-             *      rule is not a plain lowercase-and-strip: some characters stay significant
-             *      ("+" becomes "-plus-", so U-PoE, U-PoE+ and U-PoE++ are three Products).
-             *      Never derive it from model_number yourself, and never assume two model
-             *      numbers name the same Product because they look alike; store and compare
-             *      the model_slug this API returns.
-             */
-            model_slug: string;
-            /**
-             * name
-             * @description The Product's display name.
-             */
-            name: string;
-            /**
-             * pricing
-             * @description What the Product sells for now, and has sold for.
-             */
-            pricing: components["schemas"]["drophawk.developer.v1.ProductPricing"];
-            /**
-             * specs
-             * @description The Product's structured attributes, keyed by the Spec keys its
-             *      ComponentType defines, for example "vram" or "boost_clock_mhz". A key is
-             *      present only when DropHawk holds a value for it of the type the
-             *      ComponentType declares; a missing key means the value is unknown. Always
-             *      present, possibly empty.
-             */
-            specs: {
-                [key: string]: components["schemas"]["drophawk.developer.v1.SpecValue"];
-            };
-            /**
-             * url
-             * Format: uri
-             * @description The Product's page on drophawk.net, for linking a person to the full price
-             *      comparison and history. An absolute URL.
-             */
-            url: string;
-        };
-        /**
-         * ProductImage
-         * @description ProductImage is one image of a Product.
-         */
-        "drophawk.developer.v1.ProductImage": {
-            /**
-             * alt_text
-             * @description A text alternative describing the image, for accessibility.
-             */
-            alt_text: string;
-            /**
-             * height
              * Format: int32
-             * @description The image's height in pixels, at least 1.
+             * @description The google.rpc.Code of the error, for example 5 (NOT_FOUND) or 8 (RESOURCE_EXHAUSTED).
+             *     The HTTP status carries the same information.
              */
-            height: number;
+            code: number;
             /**
-             * url
-             * Format: uri
-             * @description An absolute HTTPS URL for the image. The URL is immutable: the bytes behind
-             *      it never change, so it can be cached indefinitely.
+             * @description Typed error details, each identified by its "@type".
+             *     An HTTP/JSON error always includes exactly one ErrorInfo naming why the request failed.
+             *     Other detail types may be added within v1; skip any whose "@type" you do not recognise.
              */
-            url: string;
-            /**
-             * width
-             * Format: int32
-             * @description The image's width in pixels, at least 1.
-             */
-            width: number;
+            details: (components["schemas"]["ErrorInfo"] | components["schemas"]["ErrorDetail"])[];
+            /** @description The error code's name, such as "not_found", "resource_exhausted" or "internal". Not for display; branch on the ErrorInfo reason. */
+            message: string;
         };
-        /**
-         * ProductPricing
-         * @description ProductPricing summarises a Product's prices across every store DropHawk
-         *      tracks it at.
-         *
-         *      A price DropHawk cannot state is withheld: its field is absent, and the
-         *      matching *_withheld_reason field says why. The withheld reasons, shared by
-         *      every price this API withholds (including a Product's daily lows, which have
-         *      their own withheld_reason), are:
-         *
-         *      - "NO_DATA": there is nothing to compute the price from.
-         *      - "OUT_OF_STOCK": stores list the Product at a price, but none has it in
-         *        stock (only for prices that count in-stock stores alone).
-         *      - "MIXED_CURRENCY": the prices it would be computed from are in more than one
-         *        currency, and so cannot be ranked against each other.
-         *
-         *      More may be added within v1; treat an unrecognised reason as the price being
-         *      unknown.
-         */
-        "drophawk.developer.v1.ProductPricing": {
-            /**
-             * all_time_low
-             * @description The lowest daily price ever recorded for the Product at any store, in stock
-             *      or not, and the first day it was recorded at that price. Absent when
-             *      withheld; see all_time_low_withheld_reason.
-             */
-            all_time_low?: components["schemas"]["drophawk.developer.v1.DatedPrice"];
-            /**
-             * all_time_low_withheld_reason
-             * @description Why all_time_low is absent, and itself absent when all_time_low is
-             *      present: "NO_DATA" when DropHawk has no price history for the Product, or
-             *      "MIXED_CURRENCY" when that history spans more than one currency. More may
-             *      be added within v1; treat an unrecognised reason as the price being
-             *      unknown.
-             */
-            all_time_low_withheld_reason?: "NO_DATA" | "MIXED_CURRENCY" | (string & {});
-            /**
-             * best_price
-             * @description The lowest current price among the stores that have the Product in stock.
-             *      Out-of-stock prices never count. Absent when withheld; see
-             *      best_price_withheld_reason.
-             */
-            best_price?: components["schemas"]["drophawk.developer.v1.Money"];
-            /**
-             * best_price_observed_at
-             * @description When best_price was last observed at the store offering it. Absent exactly
-             *      when best_price is.
-             */
-            best_price_observed_at?: components["schemas"]["google.protobuf.Timestamp"];
-            /**
-             * best_price_withheld_reason
-             * @description Why best_price is absent, and itself absent when best_price is present:
-             *      "OUT_OF_STOCK" when stores list the Product at a price but none has it in
-             *      stock, "NO_DATA" when no store lists it at a price at all, or
-             *      "MIXED_CURRENCY" when the in-stock prices are in more than one currency.
-             *      More may be added within v1; treat an unrecognised reason as the price
-             *      being unknown.
-             */
-            best_price_withheld_reason?: "NO_DATA" | "OUT_OF_STOCK" | "MIXED_CURRENCY" | (string & {});
-            /**
-             * in_stock_count
-             * Format: int32
-             * @description How many stores currently have the Product in stock.
-             */
-            in_stock_count: number;
-        };
-        /**
-         * ProductResult
-         * @description ProductResult is the answer for one requested identifier: the Product, or
-         *      the reason there is none. Exactly one of product and error is set.
-         */
-        "drophawk.developer.v1.ProductResult": {
-            /**
-             * error
-             * @description Why there is no product. Unset when product is set. Exactly one of product
-             *      and error is present in every result.
-             */
-            error?: components["schemas"]["drophawk.developer.v1.ProductResultError"];
-            /**
-             * identifier
-             * @description The identifier exactly as it was sent, so a caller can map the result back
-             *      without relying on position.
-             */
-            identifier: string;
-            /**
-             * merged
-             * @description True when the identifier named a Product that was merged into another, and
-             *      product is the surviving Product: the identifier you stored is stale, so
-             *      store product.model_slug instead. This is the signal to rely on. Comparing
-             *      product.model_slug with identifier is not, because a raw model number
-             *      always differs from its slug. False when error is set.
-             */
-            merged: boolean;
-            /**
-             * product
-             * @description The Product the identifier resolved to. Unset when error is set.
-             */
-            product?: components["schemas"]["drophawk.developer.v1.Product"];
-        } & (unknown | unknown);
-        /**
-         * ProductResultError
-         * @description ProductResultError is why one identifier of a batch has no Product.
-         */
-        "drophawk.developer.v1.ProductResultError": {
-            /**
-             * reason
-             * @description One of the reasons in the list on ProductService, the same ones the
-             *      top-level ErrorInfo uses and that GET /v1/products/{model_slug} would have
-             *      raised for this identifier: "PRODUCT_NOT_FOUND" (no Product is known by it,
-             *      or it is no longer listed) or "INVALID_IDENTIFIER" (it cannot name any
-             *      Product). More may be added within v1; treat an unrecognised reason as a
-             *      failure to resolve this identifier.
-             */
-            reason: "PRODUCT_NOT_FOUND" | "INVALID_IDENTIFIER" | (string & {});
-        };
-        /**
-         * SearchProductsRequest
-         * @description SearchProductsRequest is a text query and the page of its results to return.
-         */
-        "drophawk.developer.v1.SearchProductsRequest": {
-            /**
-             * client
-             * @description Which DropHawk surface is asking, so the buy_url it receives is attributed
-             *      to that surface. "mcp" is honoured: the DropHawk MCP server sends it. Any
-             *      other value, or none, means the API itself. The SDK sends nothing. It
-             *      changes only buy_url, and nothing else about the response.
-             *
-             *      Never rewrite a buy_url you were given: use it as is.
-             */
-            client?: "mcp" | (string & {});
-            /**
-             * page_size
-             * Format: int32
-             * @description The most Products to return. Defaults to 20 when 0 or omitted; a value over
-             *      50 is treated as 50, and a negative value is an error.
-             */
-            page_size?: number;
-            /**
-             * page_token
-             * @description The next_page_token of the previous response, to get the page after it.
-             *      Omit it for the first page.
-             */
-            page_token?: string;
-            /**
-             * q
-             * @description The text to search for, such as "rtx 4090" or "asus tuf". Not blank, at
-             *      most 256 bytes.
-             */
-            q: string;
-        };
-        /**
-         * SearchProductsResponse
-         * @description SearchProductsResponse is one page of matching Products.
-         */
-        "drophawk.developer.v1.SearchProductsResponse": {
-            /**
-             * next_page_token
-             * @description Send this as page_token to get the next page. Empty when this is the last
-             *      page.
-             */
-            next_page_token: string;
-            /**
-             * products
-             * @description The matching Products, best match first. Empty when nothing matches.
-             */
-            products: components["schemas"]["drophawk.developer.v1.Product"][];
-        };
-        /**
-         * SpecField
-         * @description SpecField declares one Spec a ComponentType's Products can have.
-         */
-        "drophawk.developer.v1.SpecField": {
-            /**
-             * key
-             * @description The key of the Spec in Product.specs, for example "vram". Lowercase
-             *      letters, digits and underscores.
-             */
-            key: string;
-            /**
-             * label
-             * @description A human-readable name for the Spec, for example "VRAM".
-             */
-            label: string;
-            /**
-             * type
-             * @description The kind of value Product.specs holds under this key, which is the
-             *      SpecValue field that carries it:
-             *
-             *      - "string": text, in SpecValue.string_value.
-             *      - "number": a number, in SpecValue.number_value.
-             *      - "boolean": a yes/no value, in SpecValue.bool_value.
-             *
-             *      More types may be added within v1, so the values listed in the schema are
-             *      the known ones, not a closed set. A Product's specs never holds a value for
-             *      a key whose type you do not recognise, so ignore such a Spec.
-             */
-            type: "string" | "number" | "boolean" | (string & {});
-            /**
-             * unit
-             * @description The unit the value is measured in, for example "GB" or "W", which a
-             *      Product's SpecValue.unit repeats. Absent when the Spec has no unit.
-             */
-            unit?: string;
-        };
-        /**
-         * SpecValue
-         * @description SpecValue is one structured attribute of a Product. Exactly one of the value
-         *      fields is set, matching the type the ComponentType declares for the key.
-         */
-        "drophawk.developer.v1.SpecValue": {
-            /** @description A yes/no value. */
-            bool_value?: boolean;
-            /**
-             * Format: double
-             * @description A numeric value, for example 24.
-             */
-            number_value?: number;
-            /** @description A text value, for example "RTX 4090". */
-            string_value?: string;
-            /** @description The unit the value is measured in, for example "GB" or "W". Absent when the attribute has no unit. */
-            unit?: string;
-        } | {
-            /**
-             * bool_value
-             * @description A yes/no value.
-             */
-            bool_value?: boolean;
-        } | {
-            /**
-             * number_value
-             * Format: double
-             * @description A numeric value, for example 24.
-             */
-            number_value?: number;
-        } | {
-            /**
-             * string_value
-             * @description A text value, for example "RTX 4090".
-             */
-            string_value?: string;
-        };
-        /**
-         * @description One typed error detail: "@type" names its type, and the detail's own fields sit beside it.
-         *     The detail every HTTP/JSON error carries is google.rpc.ErrorInfo.
-         */
-        "google.protobuf.Any": {
+        /** @description One typed error detail, in the shape of a google.protobuf.Any. "@type" names its type, and the detail's own fields sit beside it. */
+        ErrorDetail: {
             /** @description The detail's type URL, for example "type.googleapis.com/google.rpc.ErrorInfo". */
             "@type": string;
         };
         /**
-         * Format: date-time
-         * @description A point in time in RFC 3339 format, with up to nanosecond precision. Output uses UTC (`Z`); input may use an offset from UTC.
-         * @example 2023-01-15T01:30:15.01Z
-         * @example 2024-12-25T12:00:00Z
-         */
-        "google.protobuf.Timestamp": string;
-        /**
-         * @description Why a request failed, as a machine-readable reason.
-         *     Every HTTP/JSON error carries one in its details; find it by its "@type".
+         * @description Why a request failed, as a machine-readable reason (a google.rpc.ErrorInfo).
          *     The reasons are:
          *
-         *     - PRODUCT_NOT_FOUND (404): no Product is known by the identifier, or it is no longer listed.
+         *     - PRODUCT_NOT_FOUND (404): no Product is known by the identifier, or it has been removed from the catalog.
          *     - INVALID_IDENTIFIER (400): the identifier cannot name any Product.
          *     - INVALID_QUERY (400): the search query q is blank, over 256 bytes, or has control characters.
          *     - INVALID_PAGE_TOKEN (400): the page_token is malformed, or was issued for a different q.
@@ -906,7 +263,7 @@ export interface components {
          *
          *     More reasons may be added within v1. Treat an unrecognised reason by its HTTP status.
          */
-        "google.rpc.ErrorInfo": {
+        ErrorInfo: {
             /** @constant */
             "@type": "type.googleapis.com/google.rpc.ErrorInfo";
             /** @constant */
@@ -915,29 +272,157 @@ export interface components {
             metadata?: {
                 [key: string]: string;
             };
-            /**
-             * @description The reason, in UPPER_SNAKE_CASE.
-             *     The listed values are the known ones, not a closed set: more may be added within v1, so treat an unrecognised reason by its HTTP status.
-             */
+            /** @description The reason, in UPPER_SNAKE_CASE. Treat an unrecognised reason by its HTTP status. */
             reason: "PRODUCT_NOT_FOUND" | "INVALID_IDENTIFIER" | "INVALID_QUERY" | "INVALID_PAGE_TOKEN" | "INVALID_PAGE_SIZE" | "EMPTY_BATCH" | "BATCH_TOO_LARGE" | "INVALID_REQUEST" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "REQUEST_TOO_LARGE" | "RATE_LIMITED" | "INTERNAL" | "UNAVAILABLE" | (string & {});
         };
-        /** @description An error response. */
-        "google.rpc.Status": {
+        /** @description GetProductDailyLowsResponse is a Product's daily lows over the last 30 days. */
+        GetProductDailyLowsResponse: {
+            /** @description True when the identifier named a Product since merged into this one. Over HTTP/JSON that request is redirected instead, so a response is never merged. */
+            is_merged: boolean;
+            /** @description The Product the series belongs to. */
+            model_slug: string;
+            /** @description Daily lows, oldest first. Empty when withheld_reason is set. */
+            points: components["schemas"]["DailyLow"][];
+            /**
+             * Format: date
+             * @description The first UTC date of the 30-day window.
+             */
+            window_start: string;
+            /** @description Why points is empty: NO_DATA (no price history) or MIXED_CURRENCY (the points span more than one currency). Treat an unknown reason as no data. */
+            withheld_reason?: "NO_DATA" | "MIXED_CURRENCY" | (string & {});
+        };
+        /** @description ListBrandsResponse lists every Brand that has Products. */
+        ListBrandsResponse: {
+            /** @description The Brands, ordered by name. */
+            brands: components["schemas"]["Brand"][];
+        };
+        /** @description ListComponentTypesResponse lists every ComponentType. */
+        ListComponentTypesResponse: {
+            /** @description The ComponentTypes, ordered by name. */
+            component_types: components["schemas"]["ComponentType"][];
+        };
+        /** @description Money is an amount in one currency. The API never compares amounts across currencies. */
+        Money: {
+            /** @description The amount as a non-negative decimal string with a "." separator and no grouping, for example "1299.00". It usually has as many decimal places as the currency has minor units (2 for AUD, 0 for JPY), but may have fewer, or more when a price was observed more precisely: it is never rounded. Never reject an amount for its decimal places; parse it with a decimal type, not a float. */
+            amount: string;
+            /** @description ISO 4217 code, for example "AUD". */
+            currency: string;
+        };
+        /** @description Product is a physical part at manufacturer-SKU level and its prices across Retailers, which are never named. */
+        Product: {
+            /**
+             * Format: uri
+             * @description A DropHawk link that sends a buyer to the Retailer with the best price when it is followed, or to the Product's page when there is none. Use it unmodified.
+             */
+            best_price_url: string;
+            /** @description The Product's maker. */
+            brand: components["schemas"]["BrandRef"];
+            /** @description The Product's ComponentType, which declares the keys in specs. */
+            component_type: components["schemas"]["ComponentTypeRef"];
+            /** @description Product images, primary first. Empty when there are none. */
+            images: components["schemas"]["ProductImage"][];
+            /** @description The manufacturer's model number, for display. */
+            model_number: string;
+            /** @description The Product's stable identifier, derived by DropHawk from its model number, for example "deco-x1500-1-pack". Store and compare it as given; never derive it, since look-alike model numbers can be distinct Products ("U-PoE" and "U-PoE+"). */
+            model_slug: string;
+            /** @description The Product's display name. */
+            name: string;
+            /** @description Current and historical prices. */
+            pricing: components["schemas"]["ProductPricing"];
+            /** @description Spec values keyed by the ComponentType's spec_schema keys. A missing key means the value is unknown. */
+            specs: {
+                [key: string]: components["schemas"]["SpecValue"];
+            };
+            /**
+             * Format: uri
+             * @description The Product's page on drophawk.net.
+             */
+            url: string;
+        };
+        /** @description ProductImage is one image of a Product. */
+        ProductImage: {
+            /** @description Alt text for the image. Never empty. */
+            alt_text: string;
             /**
              * Format: int32
-             * @description The google.rpc.Code of the error, for example 5 (NOT_FOUND) or 8 (RESOURCE_EXHAUSTED).
-             *     The HTTP status carries the same information.
+             * @description Height in pixels.
              */
-            code: number;
+            height: number;
             /**
-             * @description Typed error details, each identified by its "@type".
-             *     An HTTP/JSON error always includes exactly one google.rpc.ErrorInfo naming why the request failed.
-             *     Other detail types may be added within v1; skip any whose "@type" you do not recognise.
+             * Format: uri
+             * @description Absolute URL. Its content never changes, so it can be cached indefinitely.
              */
-            details: components["schemas"]["google.protobuf.Any"][];
-            /** @description The error code's name, such as "not_found", "resource_exhausted" or "internal". Not for display; branch on the ErrorInfo reason. */
-            message: string;
+            url: string;
+            /**
+             * Format: int32
+             * @description Width in pixels.
+             */
+            width: number;
         };
+        /** @description ProductPricing aggregates a Product's prices across Retailers. A price that cannot be stated is absent, and the *_withheld_reason beside it says why. */
+        ProductPricing: {
+            /** @description The lowest daily low ever recorded, dated to the first day it occurred. Absent when withheld. */
+            all_time_low?: components["schemas"]["DatedPrice"];
+            /** @description Why all_time_low is absent: NO_DATA or MIXED_CURRENCY (the history spans currencies). Treat an unknown reason as no price. */
+            all_time_low_withheld_reason?: "NO_DATA" | "MIXED_CURRENCY" | (string & {});
+            /** @description The lowest current in-stock price. Absent when withheld. */
+            best_price?: components["schemas"]["BestPrice"];
+            /** @description Why best_price is absent: OUT_OF_STOCK (priced, but none in stock), NO_DATA (no prices) or MIXED_CURRENCY (in-stock prices span currencies). Treat an unknown reason as no price. */
+            best_price_withheld_reason?: "NO_DATA" | "OUT_OF_STOCK" | "MIXED_CURRENCY" | (string & {});
+            /**
+             * Format: int32
+             * @description Number of Retailers with the Product in stock.
+             */
+            in_stock_count: number;
+        };
+        /** @description ProductResult answers one identifier. Exactly one of product and error is set. */
+        ProductResult: {
+            /** @description Why the identifier did not resolve. */
+            error?: components["schemas"]["ProductResultError"];
+            /** @description The identifier as sent. */
+            identifier: string;
+            /** @description True when the identifier named a Product since merged into product. Store product.model_slug; comparing it with identifier is not a reliable signal. */
+            is_merged: boolean;
+            /** @description The resolved Product. */
+            product?: components["schemas"]["Product"];
+        } & (unknown | unknown);
+        /** @description ProductResultError is why one identifier of a batch has no Product. */
+        ProductResultError: {
+            /** @description PRODUCT_NOT_FOUND or INVALID_IDENTIFIER, as GET /v1/products/{identifier} would answer. Treat an unknown reason as unresolved. */
+            reason: "PRODUCT_NOT_FOUND" | "INVALID_IDENTIFIER" | (string & {});
+        };
+        /** @description SearchProductsResponse is one page of matching Products. */
+        SearchProductsResponse: {
+            /** @description Token for the next page. Empty on the last page. */
+            next_page_token: string;
+            /** @description Matching Products, best match first. */
+            products: components["schemas"]["Product"][];
+        };
+        /** @description SpecField declares one Spec a ComponentType's Products can have. */
+        SpecField: {
+            /** @description The key in Product.specs, for example "vram". */
+            key: string;
+            /** @description A human-readable name for the Spec, for example "VRAM". */
+            label: string;
+            /** @description "string", "number" or "boolean", naming the SpecValue field that carries the value. Ignore a Spec whose type you do not recognise; its values are never sent. */
+            type: "string" | "number" | "boolean" | (string & {});
+            /** @description The unit, for example "GB". Absent when the Spec has none. */
+            unit?: string;
+        };
+        /** @description SpecValue is one Spec value. Exactly one value field is set, as the key's SpecField.type declares. */
+        SpecValue: {
+            /** @description A yes/no value. */
+            bool_value?: boolean;
+            /**
+             * Format: double
+             * @description A numeric value, for example 24.
+             */
+            number_value?: number;
+            /** @description A text value, for example "RTX 4090". */
+            string_value?: string;
+            /** @description The unit, for example "GB". Absent when the Spec has none. */
+            unit?: string;
+        } & (unknown | unknown | unknown);
     };
     responses: {
         /** @description The request cannot be served as sent. Reason INVALID_IDENTIFIER, INVALID_QUERY, INVALID_PAGE_TOKEN, INVALID_PAGE_SIZE, EMPTY_BATCH, BATCH_TOO_LARGE or INVALID_REQUEST. */
@@ -950,7 +435,7 @@ export interface components {
                 [name: string]: unknown;
             };
             content: {
-                "application/json": components["schemas"]["google.rpc.Status"];
+                "application/json": components["schemas"]["Error"];
             };
         };
         /** @description The identifier names a Product that was merged into another. Follow Location to the surviving Product. */
@@ -958,6 +443,7 @@ export interface components {
             headers: {
                 "Cache-Control": components["headers"]["CacheControl"];
                 Location: components["headers"]["Location"];
+                "RateLimit-Limit": components["headers"]["RateLimitLimit"];
                 [name: string]: unknown;
             };
             content?: never;
@@ -972,7 +458,7 @@ export interface components {
                 [name: string]: unknown;
             };
             content: {
-                "application/json": components["schemas"]["google.rpc.Status"];
+                "application/json": components["schemas"]["Error"];
             };
         };
         /** @description Reason REQUEST_TOO_LARGE. The request body is over 64 KiB; retrying it cannot succeed. */
@@ -985,7 +471,7 @@ export interface components {
                 [name: string]: unknown;
             };
             content: {
-                "application/json": components["schemas"]["google.rpc.Status"];
+                "application/json": components["schemas"]["Error"];
             };
         };
         /** @description Reason RATE_LIMITED. Wait Retry-After seconds before retrying. */
@@ -999,7 +485,20 @@ export interface components {
                 [name: string]: unknown;
             };
             content: {
-                "application/json": components["schemas"]["google.rpc.Status"];
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description Any other error, such as 405, 500 or 503. See ErrorInfo for the reason. */
+        UnexpectedError: {
+            headers: {
+                "Cache-Control": components["headers"]["CacheControl"];
+                "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                "RateLimit-Reset": components["headers"]["RateLimitReset"];
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
             };
         };
     };
@@ -1008,7 +507,7 @@ export interface components {
     headers: {
         /** @description "public, max-age=300" on a successful GET; "no-store" on every other response. */
         CacheControl: string;
-        /** @description The surviving Product's URL, relative to the API's origin. */
+        /** @description The same endpoint for the surviving Product, as a path on the API's origin. */
         Location: string;
         /** @description The burst a caller may make back-to-back (30). The sustained rate is 60 requests a minute. */
         RateLimitLimit: number;
@@ -1023,7 +522,7 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    CatalogService_ListBrands: {
+    listBrands: {
         parameters: {
             query?: never;
             header?: never;
@@ -1040,22 +539,14 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["drophawk.developer.v1.ListBrandsResponse"];
+                    "application/json": components["schemas"]["ListBrandsResponse"];
                 };
             };
             429: components["responses"]["TooManyRequests"];
-            /** @description An unexpected error response. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["google.rpc.Status"];
-                };
-            };
+            default: components["responses"]["UnexpectedError"];
         };
     };
-    CatalogService_ListComponentTypes: {
+    listComponentTypes: {
         parameters: {
             query?: never;
             header?: never;
@@ -1072,22 +563,14 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["drophawk.developer.v1.ListComponentTypesResponse"];
+                    "application/json": components["schemas"]["ListComponentTypesResponse"];
                 };
             };
             429: components["responses"]["TooManyRequests"];
-            /** @description An unexpected error response. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["google.rpc.Status"];
-                };
-            };
+            default: components["responses"]["UnexpectedError"];
         };
     };
-    ProductService_BatchGetProducts: {
+    batchGetProducts: {
         parameters: {
             query?: never;
             header?: never;
@@ -1096,7 +579,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["drophawk.developer.v1.BatchGetProductsRequest"];
+                "application/json": components["schemas"]["BatchGetProductsRequest"];
             };
         };
         responses: {
@@ -1105,52 +588,30 @@ export interface operations {
                 headers: {
                     "Cache-Control": components["headers"]["CacheControl"];
                     "RateLimit-Limit": components["headers"]["RateLimitLimit"];
+                    "RateLimit-Remaining": components["headers"]["RateLimitRemaining"];
+                    "RateLimit-Reset": components["headers"]["RateLimitReset"];
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["drophawk.developer.v1.BatchGetProductsResponse"];
+                    "application/json": components["schemas"]["BatchGetProductsResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];
             413: components["responses"]["PayloadTooLarge"];
             429: components["responses"]["TooManyRequests"];
-            /** @description An unexpected error response. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["google.rpc.Status"];
-                };
-            };
+            default: components["responses"]["UnexpectedError"];
         };
     };
-    ProductService_SearchProducts: {
+    searchProducts: {
         parameters: {
             query: {
-                /**
-                 * @description Which DropHawk surface is asking, so the buy_url it receives is attributed
-                 *      to that surface. "mcp" is honoured: the DropHawk MCP server sends it. Any
-                 *      other value, or none, means the API itself. The SDK sends nothing. It
-                 *      changes only buy_url, and nothing else about the response.
-                 *
-                 *      Never rewrite a buy_url you were given: use it as is.
-                 */
+                /** @description Set to "mcp" only by the DropHawk MCP server, to attribute the links it hands out. Leave it unset; any other value is treated as unset. */
                 client?: ("mcp" | (string & {})) | "mcp" | string;
-                /**
-                 * @description The most Products to return. Defaults to 20 when 0 or omitted; a value over
-                 *      50 is treated as 50, and a negative value is an error.
-                 */
+                /** @description Products per page: 20 by default, at most 50 (larger values are served as 50). Negative is an error. */
                 page_size?: number;
-                /**
-                 * @description The next_page_token of the previous response, to get the page after it.
-                 *      Omit it for the first page.
-                 */
+                /** @description next_page_token from the previous page. Omit for the first page. */
                 page_token?: string;
-                /**
-                 * @description The text to search for, such as "rtx 4090" or "asus tuf". Not blank, at
-                 *      most 256 bytes.
-                 */
+                /** @description The search text, for example "rtx 4090". Not blank; at most 256 bytes. */
                 q: string;
             };
             header?: never;
@@ -1167,39 +628,24 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["drophawk.developer.v1.SearchProductsResponse"];
+                    "application/json": components["schemas"]["SearchProductsResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];
             429: components["responses"]["TooManyRequests"];
-            /** @description An unexpected error response. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["google.rpc.Status"];
-                };
-            };
+            default: components["responses"]["UnexpectedError"];
         };
     };
-    ProductService_GetProduct: {
+    getProduct: {
         parameters: {
             query?: {
-                /**
-                 * @description Which DropHawk surface is asking, so the buy_url it receives is attributed
-                 *      to that surface. "mcp" is honoured: the DropHawk MCP server sends it. Any
-                 *      other value, or none, means the API itself. The SDK sends nothing. It
-                 *      changes only buy_url, and nothing else about the response.
-                 *
-                 *      Never rewrite a buy_url you were given: use it as is.
-                 */
+                /** @description Set to "mcp" only by the DropHawk MCP server, to attribute the links it hands out. Leave it unset; any other value is treated as unset. */
                 client?: ("mcp" | (string & {})) | "mcp" | string;
             };
             header?: never;
             path: {
-                /** @description The Product's model_slug, or its raw model number. At most 256 bytes. */
-                model_slug: string;
+                /** @description A model_slug or model number. At most 256 bytes. */
+                identifier: string;
             };
             cookie?: never;
         };
@@ -1213,31 +659,23 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["drophawk.developer.v1.Product"];
+                    "application/json": components["schemas"]["Product"];
                 };
             };
             301: components["responses"]["MovedPermanently"];
             400: components["responses"]["BadRequest"];
             404: components["responses"]["NotFound"];
             429: components["responses"]["TooManyRequests"];
-            /** @description An unexpected error response. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["google.rpc.Status"];
-                };
-            };
+            default: components["responses"]["UnexpectedError"];
         };
     };
-    ProductService_GetProductDailyLows: {
+    getProductDailyLows: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                /** @description The Product's model_slug, or its raw model number. At most 256 bytes. */
-                model_slug: string;
+                /** @description A model_slug or model number. At most 256 bytes. */
+                identifier: string;
             };
             cookie?: never;
         };
@@ -1251,22 +689,14 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["drophawk.developer.v1.GetProductDailyLowsResponse"];
+                    "application/json": components["schemas"]["GetProductDailyLowsResponse"];
                 };
             };
             301: components["responses"]["MovedPermanently"];
             400: components["responses"]["BadRequest"];
             404: components["responses"]["NotFound"];
             429: components["responses"]["TooManyRequests"];
-            /** @description An unexpected error response. */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["google.rpc.Status"];
-                };
-            };
+            default: components["responses"]["UnexpectedError"];
         };
     };
 }

@@ -26,11 +26,11 @@ const BEST_PRICE_MEANING =
   "MIXED_CURRENCY means the in-stock prices are in more than one currency so no single lowest exists.";
 
 const LINK_RULES =
-  "Every Product has two links. Give buy_url to someone who is ready to buy: it is a DropHawk link that resolves to the best price at the moment it is followed. " +
+  "Every Product has two links. Give best_price_url to someone who is ready to buy: it is a DropHawk link that resolves to the best price at the moment it is followed. " +
   "Give url to someone who is still comparing: it is the Product's page with the full price comparison and history. " +
-  "When best_price is withheld, buy_url only opens the Product page, so give url instead, and for OUT_OF_STOCK say the Product is out of stock rather than offering to buy it. " +
+  "When best_price is withheld, best_price_url only opens the Product page, so give url instead, and for OUT_OF_STOCK say the Product is out of stock rather than offering to buy it. " +
   "DropHawk does not say which retailer has the best price; do not guess one. " +
-  "Pass either link exactly as given and never rewrite it. Never fetch, prefetch or unfurl buy_url, because following it counts as a visit to a retailer.";
+  "Pass either link exactly as given and never rewrite it. Never fetch, prefetch or unfurl best_price_url, because following it counts as a visit to a retailer.";
 
 export const INSTRUCTIONS = [
   "DropHawk tracks prices for PC components sold by Australian retailers. Use search_products to find a Product, get_products for known Products and get_daily_lows for the last 30 days of price movement. The drophawk://component-types and drophawk://brands resources list what is covered.",
@@ -78,6 +78,6 @@ export const DAILY_LOWS_DESCRIPTION = [
   "Each day is the lowest price observed across all of the Product's retailers, whether or not the retailer had stock, so it is not a history of the best price and may be lower than what can be bought today.",
   "The series is withheld when the Product has no history (NO_DATA) or its prices span more than one currency (MIXED_CURRENCY), and the answer says which.",
   DATA_RULE,
-  "It carries no links: get_products returns url and buy_url for the same identifier.",
+  "It carries no links: get_products returns url and best_price_url for the same identifier.",
   "Prices are what DropHawk observed, not live quotes. Coverage is PC components and related hardware sold by Australian retailers.",
 ].join(" ");

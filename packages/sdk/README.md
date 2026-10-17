@@ -29,20 +29,22 @@ if (!first) throw new Error("no matches");
 const product = await dh.getProduct(first.model_slug);
 
 const best = product.pricing.best_price;
-console.log(best ? `${product.name}: ${best.amount} ${best.currency}` : `${product.name}: no price right now`);
+console.log(best ? `${product.name}: ${best.price.amount} ${best.price.currency} (seen ${best.observed_at})` : `${product.name}: no price right now`);
 
 // Send the person here. Use it exactly as given.
-console.log(product.buy_url);
+console.log(product.best_price_url);
 ```
 
-`buy_url` is a DropHawk link that resolves to the cheapest in-stock store when it is followed, not when you fetched it, so it stays correct however long you keep it.
+`best_price_url` is a DropHawk link that resolves to the cheapest in-stock store when it is followed, not when you fetched it, so it stays correct however long you keep it.
 It never names a store.
 **Pass it through unchanged**: do not rewrite, shorten, strip or add query parameters, because its parameters attribute the click.
-When the Product has no `best_price` at that moment (nothing in stock, or in-stock prices in more than one currency), following `buy_url` sends the buyer to the Product's page on drophawk.net instead of to a store, and no click toward a store is recorded.
+When the Product has no `best_price` at that moment (nothing in stock, or in-stock prices in more than one currency), following `best_price_url` sends the buyer to the Product's page on drophawk.net instead of to a store, and no click toward a store is recorded.
 `product.url` is the Product's page on drophawk.net if you want to show the full price comparison instead.
 
 Money is `{ amount: "1299.00", currency: "AUD" }`.
 `amount` is a decimal string so it is exact; parse it with a decimal type, not a float.
+It usually has the currency's minor units (2 for AUD, 0 for JPY) but can have fewer or more decimal places and is never rounded, so never reject an amount for its decimals.
+`best_price` is `{ price, observed_at }`: the Money, and when a Retailer last confirmed it.
 
 ## Methods
 
@@ -54,7 +56,7 @@ All methods return promises, take an optional last argument `{ signal?: AbortSig
 | `getProducts(identifiers)` | `ProductResult[]`, in request order |
 | `searchProducts({ query, page_size?, page_token? })` | `{ products, next_page_token }` |
 | `iterateSearchProducts({ query, page_size? })` | `AsyncIterableIterator<Product>` over every page |
-| `getDailyLows(identifier)` | `{ points, withheld_reason? }` |
+| `getDailyLows(identifier)` | `{ model_slug, is_merged, window_start, points, withheld_reason? }` |
 | `listComponentTypes()` | `{ component_types }`, each with its Spec schema |
 | `listBrands()` | `{ brands }` |
 
@@ -72,8 +74,8 @@ A model number containing `/`, and the identifiers `.` and `..`, cannot travel i
 When a Product was found to duplicate another, the API redirects to the survivor.
 The SDK follows that redirect for you, so `getProduct` returns the surviving Product: store its `model_slug`.
 To find out whether an identifier you stored is stale, compare it with `(await dh.getProduct(identifier)).model_slug`.
-`getDailyLows` follows the redirect too but its response does not name the Product, so call `getProduct` when you need the canonical slug.
-In a batch there is no redirect: the result has `merged: true` and `product` is the survivor, which is the signal to rely on.
+`getDailyLows` follows the redirect too and its response names the Product it belongs to in `model_slug`, so store that, and `window_start` is the first UTC date of its 30-day window.
+In a batch there is no redirect: the result has `is_merged: true` and `product` is the survivor, which is the signal to rely on.
 The batch request is sent with `redirect: "manual"`, so its body is never resent elsewhere, and a redirect in answer to it is `INVALID_RESPONSE`.
 Any request whose final URL is on another origin than `baseUrl` is `INVALID_RESPONSE` too.
 
@@ -84,7 +86,7 @@ const results = await dh.getProducts(["rtx-4090", "Deco X1500(1-pack)", "no-such
 
 for (const r of results) {
   if (r.error) console.log(r.identifier, r.error.reason); // "PRODUCT_NOT_FOUND" or "INVALID_IDENTIFIER"
-  else console.log(r.product.model_slug, r.merged ? "(merged, update your stored slug)" : "");
+  else console.log(r.product.model_slug, r.is_merged ? "(merged, update your stored slug)" : "");
 }
 ```
 

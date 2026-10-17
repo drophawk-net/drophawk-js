@@ -62,10 +62,10 @@ describe("built server over stdio", () => {
     const result = await client.callTool({ name: "search_products", arguments: { query: "rtx 4090", limit: 5 } });
     expect(result.isError).toBeFalsy();
     const text = (result.content as { type: string; text: string }[])[0]?.text ?? "";
-    expect(text).toContain("buy_url: https://go.drophawk.net/p/rtx-4090?src=mcp&rep=json&sig=a%2Bb");
-    const sc = result.structuredContent as { products: { model_slug: string; url: string; buy_url: string }[] };
+    expect(text).toContain("best_price_url: https://go.drophawk.net/p/rtx-4090?src=mcp&rep=json&sig=a%2Bb");
+    const sc = result.structuredContent as { products: { model_slug: string; url: string; best_price_url: string }[] };
     expect(sc.products[0]?.model_slug).toBe("rtx-4090");
-    expect(sc.products[0]?.buy_url).toContain("src=mcp");
+    expect(sc.products[0]?.best_price_url).toContain("src=mcp");
 
     const search = requests.find((r) => r.url.pathname === "/v1/products:search");
     expect(search?.url.searchParams.get("client")).toBe("mcp");

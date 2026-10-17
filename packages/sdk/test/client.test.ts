@@ -70,11 +70,11 @@ describe("getProduct", () => {
     expect(m.calls[0]!.url.search).toBe("");
   });
 
-  it("returns buy_url byte for byte", async () => {
+  it("returns best_price_url byte for byte", async () => {
     const p = product("rtx-4090");
     const m = mockFetch(() => json(p));
     const got = await new DropHawk({ fetch: m.fetch }).getProduct("rtx-4090");
-    expect(got.buy_url).toBe("https://go.drophawk.net/p/rtx-4090?src=api&rep=json&sig=a%2Bb");
+    expect(got.best_price_url).toBe("https://go.drophawk.net/p/rtx-4090?src=api&rep=json&sig=a%2Bb");
   });
 
   it("exposes the canonical model_slug after a followed merged-Product redirect", async () => {
@@ -124,16 +124,16 @@ describe("getProduct", () => {
 describe("getProducts", () => {
   it("POSTs identifiers and returns results in request order with per-item errors", async () => {
     const results = [
-      { identifier: "a", merged: false, product: product("a") },
-      { identifier: "ghost", merged: false, error: { reason: "PRODUCT_NOT_FOUND" } },
-      { identifier: "old", merged: true, product: product("new") },
-      { identifier: "   ", merged: false, error: { reason: "INVALID_IDENTIFIER" } },
+      { identifier: "a", is_merged: false, product: product("a") },
+      { identifier: "ghost", is_merged: false, error: { reason: "PRODUCT_NOT_FOUND" } },
+      { identifier: "old", is_merged: true, product: product("new") },
+      { identifier: "   ", is_merged: false, error: { reason: "INVALID_IDENTIFIER" } },
     ];
     const m = mockFetch(() => json({ results }));
     const got = await new DropHawk({ fetch: m.fetch }).getProducts(["a", "ghost", "old", "   "]);
     expect(got).toEqual(results);
     expect(got[1]!.error?.reason).toBe("PRODUCT_NOT_FOUND");
-    expect(got[2]!.merged).toBe(true);
+    expect(got[2]!.is_merged).toBe(true);
     const call = m.calls[0]!;
     expect(call.init.method).toBe("POST");
     expect(call.url.pathname).toBe("/v1/products:batchGet");
@@ -218,7 +218,15 @@ describe("iterateSearchProducts", () => {
 });
 
 describe("getDailyLows", () => {
-  const body = { points: [{ date: "2026-10-01", price: { amount: "10.00", currency: "AUD" }, is_carried_forward: false }] };
+  const body = { model_slug: "rtx-4090", is_merged: false, window_start: "2026-09-17", points: [{ date: "2026-10-01", price: { amount: "10.00", currency: "AUD" }, is_carried_forward: false }] };
+
+  const meta = { model_slug: "x", is_merged: false, window_start: "2026-09-17" };
+
+  it("exposes the response model_slug, is_merged and window_start", async () => {
+    const m = mockFetch(() => json({ ...meta, model_slug: "survivor", points: [] }));
+    const got = await new DropHawk({ fetch: m.fetch }).getDailyLows("old");
+    expect([got.model_slug, got.is_merged, got.window_start]).toEqual(["survivor", false, "2026-09-17"]);
+  });
 
   it("GETs the daily lows", async () => {
     const m = mockFetch(() => json(body));
@@ -228,8 +236,8 @@ describe("getDailyLows", () => {
   });
 
   it("passes a withheld reason through", async () => {
-    const m = mockFetch(() => json({ points: [], withheld_reason: "MIXED_CURRENCY" }));
-    expect(await new DropHawk({ fetch: m.fetch }).getDailyLows("x")).toEqual({ points: [], withheld_reason: "MIXED_CURRENCY" });
+    const m = mockFetch(() => json({ ...meta, points: [], withheld_reason: "MIXED_CURRENCY" }));
+    expect(await new DropHawk({ fetch: m.fetch }).getDailyLows("x")).toEqual({ ...meta, points: [], withheld_reason: "MIXED_CURRENCY" });
   });
 });
 
@@ -250,12 +258,18 @@ describe("types", () => {
     // @ts-expect-error pageSize is not a wire name
     const a: Parameters<DropHawk["searchProducts"]>[0] = { query: "x", pageSize: 1 };
     // @ts-expect-error unknown field on a Product
-    const b: string = product().buy_urll;
+    const b: string = product().best_price_urll;
     expect([a, b]).toBeDefined();
   });
 
-  it("buy_url is a required string", () => {
-    const url: string = product().buy_url;
+  it("best_price is a nested price and observation time, and Money keeps any decimals", () => {
+    const best = product("x", { pricing: { best_price: { price: { amount: "599", currency: "JPY" }, observed_at: "2026-10-16T01:00:00Z" }, in_stock_count: 1 } }).pricing.best_price;
+    expect(best?.price.amount).toBe("599");
+    expect(best?.observed_at).toBe("2026-10-16T01:00:00Z");
+  });
+
+  it("best_price_url is a required string", () => {
+    const url: string = product().best_price_url;
     expect(typeof url).toBe("string");
   });
 });
