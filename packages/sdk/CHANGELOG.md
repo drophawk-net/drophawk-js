@@ -1,5 +1,11 @@
 # @drophawk/sdk
 
+## 0.1.1
+
+### Patch Changes
+
+- [#15](https://github.com/drophawk-net/drophawk-js/pull/15) [`c3e51a1`](https://github.com/drophawk-net/drophawk-js/commit/c3e51a1bf6c0b73d722c51dcdf4f92f9e2d6e53d) Thanks [@jared-fraser](https://github.com/jared-fraser)! - Drop the one-off first-publish maintainer notes from the package README.
+
 ## 0.1.0
 
 ### Minor Changes
