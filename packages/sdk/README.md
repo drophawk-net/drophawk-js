@@ -1,21 +1,13 @@
 # @drophawk/sdk
 
-TypeScript client for the [DropHawk developer API](https://developers.drophawk.net): current and historical prices for PC components, aggregated across stores, with a link to send a buyer to the best price.
-
-- Zero runtime dependencies, ESM only, ships its own types.
-- Works on Node 22+, Bun, Deno and browsers (anything with a global `fetch`).
-- No API key. The API is anonymous and rate limited per IP address.
-
-## Install
-
-```sh
-npm install @drophawk/sdk
-# or: bun add @drophawk/sdk
-```
+TypeScript client for the [DropHawk developer API](https://developers.drophawk.net): current and historical prices for PC components sold by Australian retailers, with a link that sends a buyer to the best price.
+No API key, no runtime dependencies, typed ESM for Node >=22, Bun, Deno and browsers.
 
 ## Quick start
 
-Search for a part, read its price, and hand the person a link to buy it.
+```sh
+npm install @drophawk/sdk   # or: bun add @drophawk/sdk
+```
 
 ```ts
 import { DropHawk } from "@drophawk/sdk";
@@ -23,62 +15,54 @@ import { DropHawk } from "@drophawk/sdk";
 const dh = new DropHawk();
 
 const { products } = await dh.searchProducts({ query: "rtx 4090", page_size: 5 });
-const first = products[0];
-if (!first) throw new Error("no matches");
-
-const product = await dh.getProduct(first.model_slug);
+const product = products[0];
+if (!product) throw new Error("no matches");
 
 const best = product.pricing.best_price;
-console.log(best ? `${product.name}: ${best.price.amount} ${best.price.currency} at ${best.retailer.name} (seen ${best.observed_at})` : `${product.name}: no price right now`);
-
-// Send the person here. Use it exactly as given.
-console.log(product.best_price_url);
+console.log(best ? `${best.price.amount} ${best.price.currency} at ${best.retailer.name}` : "no price right now");
+console.log(product.best_price_url); // send the buyer here, unchanged
 ```
 
-`best_price_url` is a DropHawk link that resolves to the cheapest in-stock store when it is followed, not when you fetched it, so it stays correct however long you keep it.
-**Pass it through unchanged**: do not rewrite, shorten, strip or add query parameters, because its parameters attribute the click.
-When the Product has no `best_price` at that moment (nothing in stock, or in-stock prices in more than one currency), following `best_price_url` sends the buyer to the Product's page on drophawk.net instead of to a store, and no click toward a store is recorded.
-`product.url` is the Product's page on drophawk.net if you want to show the full price comparison instead.
+## Prices and links
+
+| Field | Meaning |
+| --- | --- |
+| `pricing.best_price` | `{ price, observed_at, retailer }`: the lowest in-stock price, when it was last confirmed, and the Retailer (`{ slug, name }`) offering it as of then, the only one ever named. |
+| `pricing.in_stock_count` | How many Retailers have it in stock. |
+| `pricing.all_time_low` | The lowest daily low ever recorded, in stock or not, dated to its first day. |
+| `best_price_url` | A DropHawk link that resolves to the best price when followed, so it may reach a different Retailer than `best_price` names. With no `best_price`, it opens the Product page. Never modify it: its parameters attribute the click. |
+| `url` | The Product's page on drophawk.net, with the full comparison and history. |
 
 Money is `{ amount: "1299.00", currency: "AUD" }`.
-`amount` is a decimal string so it is exact; parse it with a decimal type, not a float.
-It usually has the currency's minor units (2 for AUD, 0 for JPY) but can have fewer or more decimal places and is never rounded, so never reject an amount for its decimals.
-`best_price` is `{ price, observed_at, retailer }`: the Money, when the Retailer last confirmed it, and that Retailer as `{ slug, name }`.
-`retailer` is the Retailer offering the price as of `observed_at`; no other Retailer is ever named.
-`best_price_url` resolves when it is followed, so it may since have moved to a different Retailer.
+`amount` is an exact decimal string, never rounded, that may have more or fewer decimal places than the currency's minor units: parse it with a decimal type, and never reject it for its decimals.
+Amounts in different currencies are never compared.
+
+A price DropHawk cannot state is absent, and `best_price_withheld_reason`, `all_time_low_withheld_reason` or `withheld_reason` (daily lows) says why: `OUT_OF_STOCK` (listed, but in stock nowhere; best price only), `NO_DATA` (no price yet) or `MIXED_CURRENCY` (prices span currencies).
+Treat any other reason as the price being unknown.
 
 ## Methods
 
-All methods return promises, take an optional last argument `{ signal?: AbortSignal }`, and reject with a `DropHawkError` when the API answers with an error.
+Each method returns a promise, takes an optional last argument `{ signal?: AbortSignal }`, and rejects with `DropHawkError` on an API error.
+Fields keep the API's snake_case names, matching the [API reference](https://developers.drophawk.net).
 
 | Method | Returns |
 | --- | --- |
 | `getProduct(identifier)` | `Product` |
 | `getProducts(identifiers)` | `ProductResult[]`, in request order |
-| `searchProducts({ query, page_size?, page_token? })` | `{ products, next_page_token }` |
+| `searchProducts({ query, page_size?, page_token? })` | `{ products, next_page_token }`, best match first |
 | `iterateSearchProducts({ query, page_size? })` | `AsyncIterableIterator<Product>` over every page |
 | `getDailyLows(identifier)` | `{ model_slug, is_merged, window_start, points, withheld_reason? }` |
 | `listComponentTypes()` | `{ component_types }`, each with its Spec schema |
 | `listBrands()` | `{ brands }` |
 
-Request parameters and response fields keep the API's snake_case names, so the types match the [API reference](https://developers.drophawk.net) one to one.
-Only the SDK's own configuration and error fields (`baseUrl`, `userAgent`, `retryAfterSeconds`) are camelCase.
-The types describe the fields the API documents today and a typo is a compile error; fields added later still arrive at runtime and are ignored by the types.
+### Identifiers and merges
 
-### Identifiers and merged Products
+An identifier is a `model_slug` (`"deco-x1500-1-pack"`) or a raw model number (`"Deco X1500(1-pack)"`).
+Store the `model_slug` the API returns; never derive one.
+Single-Product methods reject `.`, `..` and model numbers containing `/` with `INVALID_IDENTIFIER` before sending; use the `model_slug` instead.
 
-An identifier is a Product's `model_slug` (`"deco-x1500-1-pack"`) or its raw model number (`"Deco X1500(1-pack)"`).
-Always store the `model_slug` the API returns, never one you derived yourself.
-A model number containing `/`, and the identifiers `.` and `..`, cannot travel in a URL path; the single-Product methods reject them locally with an `INVALID_IDENTIFIER` error, so use the `model_slug` instead.
-(In a batch they are sent in the body and answered per item.)
-
-When a Product was found to duplicate another, the API redirects to the survivor.
-The SDK follows that redirect for you, so `getProduct` returns the surviving Product: store its `model_slug`.
-To find out whether an identifier you stored is stale, compare it with `(await dh.getProduct(identifier)).model_slug`.
-`getDailyLows` follows the redirect too and its response names the Product it belongs to in `model_slug`, so store that, and `window_start` is the first UTC date of its 14-day window.
-In a batch there is no redirect: the result has `is_merged: true` and `product` is the survivor, which is the signal to rely on.
-The batch request is sent with `redirect: "manual"`, so its body is never resent elsewhere, and a redirect in answer to it is `INVALID_RESPONSE`.
-Any request whose final URL is on another origin than `baseUrl` is `INVALID_RESPONSE` too.
+When a duplicate Product is merged into another, `getProduct` and `getDailyLows` return the survivor, so store the `model_slug` they return.
+In a batch, the result has `is_merged: true` and `product` is the survivor.
 
 ### Batches
 
@@ -86,87 +70,74 @@ Any request whose final URL is on another origin than `baseUrl` is `INVALID_RESP
 const results = await dh.getProducts(["rtx-4090", "Deco X1500(1-pack)", "no-such-part"]);
 
 for (const r of results) {
-  if (r.error) console.log(r.identifier, r.error.reason); // "PRODUCT_NOT_FOUND" or "INVALID_IDENTIFIER"
-  else console.log(r.product.model_slug, r.is_merged ? "(merged, update your stored slug)" : "");
+  if (r.error) console.log(r.identifier, r.error.reason); // PRODUCT_NOT_FOUND or INVALID_IDENTIFIER
+  else console.log(r.product.model_slug, r.is_merged ? "(merged: store this slug)" : "");
 }
 ```
 
-`results[i]` answers `identifiers[i]`.
-A bad identifier never throws; it comes back as `result.error`.
-Only a problem with the whole batch throws: `EMPTY_BATCH`, or `BATCH_TOO_LARGE` for more than 50 identifiers.
+Up to 50 identifiers, counted as one request.
+An unresolved identifier comes back as `result.error`; only `EMPTY_BATCH` or `BATCH_TOO_LARGE` throws.
 
 ### Pagination
 
 ```ts
 for await (const product of dh.iterateSearchProducts({ query: "asus tuf" })) {
   console.log(product.model_slug);
-  if (done) break; // stops fetching further pages
+  if (done) break; // no further page is fetched
 }
 ```
 
-Pages are fetched lazily.
-To page by hand, pass the previous `next_page_token` as `page_token`; the last page has an empty token.
-A page token is only valid for the query it was issued for.
-If the API ever repeated a token, iteration stops with an `INVALID_RESPONSE` error instead of looping.
+`page_size` defaults to 20, at most 50.
+To page by hand, pass `next_page_token` as `page_token`; it is empty on the last page and valid only for its query.
 
-### Withheld prices
+### Daily lows
 
-A price DropHawk cannot state is absent, with a reason beside it, for example `pricing.best_price_withheld_reason`, `pricing.all_time_low_withheld_reason` and `withheld_reason` on daily lows.
-Reasons today are `NO_DATA`, `OUT_OF_STOCK` and `MIXED_CURRENCY`.
-Treat an unrecognised reason as the price being unknown.
+`points` holds the lowest price on each UTC day of the last 14, across all Retailers, in stock or not, oldest first, starting at `window_start`.
+One point with `is_carried_forward: true` may precede the window: the price in force when it opened.
+Because stock is ignored, a daily low can be below anything buyable today.
 
 ## Options
 
-```ts
-const dh = new DropHawk({
-  baseUrl: "https://api.drophawk.net", // default
-  fetch: myFetch,                       // default: the global fetch
-  userAgent: "my-app/1.2",              // appended to "drophawk-sdk/<version>"
-});
-```
+`new DropHawk(options?)` takes:
 
-`userAgent` applies on Node, Bun and Deno only.
-Browsers do not let a script set `User-Agent` (Firefox logs a warning for it), so the SDK sends none there and ignores the option.
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `baseUrl` | `https://api.drophawk.net` | The API origin. |
+| `fetch` | the global `fetch` | For tests, proxies, or reading headers such as `RateLimit-Remaining`. |
+| `userAgent` | none | Appended to `drophawk-sdk/<version>`, such as `"my-app/1.2"`. Ignored in browsers. |
 
 ## Errors
 
 ```ts
-import { DropHawk, DropHawkError } from "@drophawk/sdk";
+import { DropHawkError } from "@drophawk/sdk";
 
 try {
   await dh.getProduct("nope");
 } catch (err) {
-  if (err instanceof DropHawkError && err.reason === "PRODUCT_NOT_FOUND") {
-    // ...
-  } else {
-    throw err;
-  }
+  if (!(err instanceof DropHawkError) || err.reason !== "PRODUCT_NOT_FOUND") throw err;
 }
 ```
 
-`DropHawkError` carries:
+| Field | Meaning |
+| --- | --- |
+| `status` | HTTP status; 400 for an identifier rejected before sending. |
+| `reason` | Machine-readable reason. Branch on it, not on `message`. |
+| `domain` | `"drophawk.net"` for errors the API raised. |
+| `metadata` | Context, such as `max_identifiers` on `BATCH_TOO_LARGE`. |
+| `retryAfterSeconds` | Seconds to wait, on `RATE_LIMITED`. |
+| `retryable` | True for `RATE_LIMITED`, `UNAVAILABLE` and `INTERNAL`. |
 
-- `status`: the HTTP status (400 for an identifier rejected before anything was sent).
-- `reason`: a string such as `PRODUCT_NOT_FOUND`, `INVALID_IDENTIFIER`, `INVALID_QUERY`, `INVALID_PAGE_TOKEN`, `INVALID_PAGE_SIZE`, `EMPTY_BATCH`, `BATCH_TOO_LARGE`, `REQUEST_TOO_LARGE`, `RATE_LIMITED`, `UNAVAILABLE` or `INTERNAL`, plus `INVALID_RESPONSE`, which the SDK raises when a 2xx body is not JSON or a page token repeats.
-  The vocabulary is open: new reasons can appear within v1, so keep a fallback that looks at `status`.
-  If a response has no machine-readable reason (for example a proxy error page), `reason` is derived from the status (502, 503 and 504 become `UNAVAILABLE`), or is `"UNKNOWN"`.
-- `domain`: `"drophawk.net"` for errors the API raised.
-- `metadata`: extra context, for example `max_identifiers` on `BATCH_TOO_LARGE`.
-- `retryAfterSeconds`: seconds to wait, set for `RATE_LIMITED`.
-- `retryable`: true for `RATE_LIMITED`, `UNAVAILABLE` and `INTERNAL`.
-
-Branch on `reason`, not on `message`.
-Network failures and aborted calls are not wrapped; they surface as the runtime's own `TypeError` or `AbortError`.
+API reasons: `PRODUCT_NOT_FOUND`, `INVALID_IDENTIFIER`, `INVALID_QUERY`, `INVALID_PAGE_TOKEN`, `INVALID_PAGE_SIZE`, `EMPTY_BATCH`, `BATCH_TOO_LARGE`, `INVALID_REQUEST`, `NOT_FOUND`, `METHOD_NOT_ALLOWED`, `REQUEST_TOO_LARGE`, `RATE_LIMITED`, `UNAVAILABLE`, `INTERNAL`.
+Without a machine-readable reason (a proxy error page, say), `reason` comes from the status (502 to 504 are `UNAVAILABLE`) or is `"UNKNOWN"`.
+The SDK raises `INVALID_RESPONSE` for answers it will not use: a 2xx body that is not JSON, any body over 8 MiB, a redirect off the `baseUrl` origin, a redirected batch, or a repeated page token.
+New reasons can appear within v1, so keep a fallback on `status`.
+Network failures and aborts surface unwrapped, as the runtime's `TypeError` or `AbortError`.
 
 ## Rate limits and retries
 
-Each IP address may make 60 requests a minute on average, in bursts of up to 30.
-A batch counts as one request, so prefer `getProducts` over many `getProduct` calls.
-Successful GETs are cacheable for 5 minutes, so repeating a lookup is cheap.
-
-The SDK never retries on its own.
-`error.retryable` is true for `RATE_LIMITED`, `UNAVAILABLE` and `INTERNAL`, the reasons that can succeed later; the rest will fail the same way again.
-A minimal retry on that flag:
+Each IP may make 60 requests a minute on average, in bursts of up to 30, and successful GETs are cacheable for 5 minutes.
+Prefer one batch over many `getProduct` calls.
+The SDK never retries; a minimal retry on `retryable`:
 
 ```ts
 async function withRetry<T>(call: () => Promise<T>, attempts = 3): Promise<T> {
@@ -183,23 +154,10 @@ async function withRetry<T>(call: () => Promise<T>, attempts = 3): Promise<T> {
 const product = await withRetry(() => dh.getProduct("rtx-4090"));
 ```
 
-To read the `RateLimit-Remaining` and `RateLimit-Reset` headers, pass a wrapping `fetch` in the options.
-
 ## Compatibility
 
-The API is v1 and additive: fields, endpoints, error reasons and withheld reasons may be added, but none are removed or change meaning.
-A breaking change would be a v2, served alongside v1 for at least 3 months.
-The SDK follows semver and its types are generated from the API's OpenAPI document, so ignore properties and reasons you do not recognise.
+API v1 only adds fields, endpoints and reasons, so ignore what you do not recognise; a breaking change would be a v2, served alongside v1 for at least 3 months.
+The SDK follows semver.
 
-Full documentation: https://developers.drophawk.net
-
-## Maintaining this package
-
-Types in `src/generated/api.ts` are generated from `spec/developer-v1.openapi.json` at the repository root (synced from the DropHawk backend, see the root README).
-After that document changes, run `bun run generate` in this directory and commit the result.
-CI fails when the generated file is stale.
-
-Versions and changelogs come from [Changesets](https://github.com/changesets/changesets).
-Run `bun run changeset` at the repository root for any change to this package and commit the file.
-Merging to `main` opens a "chore: version packages" PR; merging that PR publishes to npm.
-Never edit `CHANGELOG.md` or the version by hand.
+Full documentation is at [developers.drophawk.net](https://developers.drophawk.net).
+For AI assistants, see [`@drophawk/mcp`](https://www.npmjs.com/package/@drophawk/mcp).
