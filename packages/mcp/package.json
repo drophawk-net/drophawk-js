@@ -1,6 +1,6 @@
 {
   "name": "@drophawk/mcp",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "MCP server for DropHawk: Australian PC component prices with buy links, for AI assistants.",
   "keywords": ["drophawk", "mcp", "model-context-protocol", "prices", "price-tracking", "pc-components"],
   "homepage": "https://developers.drophawk.net",
