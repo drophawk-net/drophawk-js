@@ -6,5 +6,6 @@
 - Prices are in the currency each listing is sold in, so amounts across two
   currencies are not comparable and DropHawk will not rank them against
   each other.
-- There is no public write API. Price monitors and email alerts need a signed-in
+- There is no public write API, on the markdown pages or on the developer API:
+  both only read. Price monitors and email alerts need a signed-in
   account at https://drophawk.net/signup, which is a human's job, not an agent's.
