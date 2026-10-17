@@ -155,35 +155,3 @@ Build the SDK before this package (`bun run --filter @drophawk/sdk build`), beca
 Versions and changelogs come from [Changesets](https://github.com/changesets/changesets), exactly as for the SDK: run `bun run changeset` at the repository root and commit the file.
 Never edit `CHANGELOG.md` or the version by hand.
 The release workflow rewrites the `workspace:` range on `@drophawk/sdk` to a real version range just before publishing (`scripts/resolve-workspace-deps.ts`), because `npm publish` would otherwise upload it verbatim.
-
-### First publish (one-off, human)
-
-This is a one-off step for a human who owns the `@drophawk` npm organisation.
-No agent or workflow does it.
-
-Prerequisites (the same as the SDK's, see its [first publish](../sdk/README.md#first-publish-one-off-human)):
-
-- The repository is MIT licensed, and `scripts/prepare-publish.ts` copies the root `LICENSE` into each package directory at publish time.
-- The GitHub repository, `drophawk-net/drophawk-js`, is public.
-- The `release` GitHub environment holds `DROPHAWK_JS_RELEASE_CLIENT_ID` (variable) and `DROPHAWK_JS_RELEASE_PRIVATE_KEY` (secret), or the version job fails.
-- The `npm` GitHub environment exists, because the trusted publisher is bound to its name.
-- `@drophawk/sdk` is already published, because this package depends on it and npm configures a trusted publisher only for a package that exists.
-
-A plain `npm publish` skips the release workflow's `workspace:` rewrite, so it would upload `"@drophawk/sdk": "workspace:^"` and the package could not be installed.
-Publish from a throwaway checkout after the rewrite:
-
-1. Merge the "chore: version packages" PR that the Release workflow opens, which bumps `@drophawk/mcp` to `0.1.0`.
-   The first run of the publish job fails for this package because npm does not know it yet; that is expected.
-2. In a throwaway clone of `main` at the version commit, run these at the repository root:
-   `bun install --frozen-lockfile`, then `bun scripts/prepare-publish.ts`, then `bun run --filter @drophawk/sdk build`, then `bun scripts/resolve-workspace-deps.ts`.
-   The SDK build is needed because packing builds this package, which compiles against `packages/sdk/dist`, and that is gitignored so a fresh clone has none.
-   Never commit the result.
-3. In `packages/mcp`, run `npm pack --pack-destination /tmp --silent` and check the tarball: `tar -tzf /tmp/drophawk-mcp-0.1.0.tgz | grep -x package/LICENSE` must print the line, and `tar -xzOf /tmp/drophawk-mcp-0.1.0.tgz package/package.json | grep workspace:` must print nothing.
-4. Still in `packages/mcp`, run `npm publish --provenance=false`, signing in with 2FA.
-   This publishes the real `0.1.0` as `latest`; the `prepack` script builds it first.
-   Provenance is off only because a local publish cannot produce it; trusted publishing adds it from the next release on.
-5. On npmjs.com open `@drophawk/mcp` > Settings > Trusted Publisher, choose GitHub Actions, and enter organization or user `drophawk-net`, repository `drophawk-js`, workflow filename `release.yml`, and environment `npm`.
-   The publish job runs in the GitHub environment `npm`, and npm rejects the token exchange if the two names differ.
-6. In the package's publishing access settings, choose "Require two-factor authentication and disallow tokens".
-   This is mandatory, not optional: it leaves trusted publishing as the only way to publish.
-7. Tag the release that the workflow could not: `git tag @drophawk/mcp@0.1.0 <version-commit>` and `git push origin @drophawk/mcp@0.1.0`.

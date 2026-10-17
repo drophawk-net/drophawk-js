@@ -203,39 +203,3 @@ Versions and changelogs come from [Changesets](https://github.com/changesets/cha
 Run `bun run changeset` at the repository root for any change to this package and commit the file.
 Merging to `main` opens a "chore: version packages" PR; merging that PR publishes to npm.
 Never edit `CHANGELOG.md` or the version by hand.
-
-### First publish (one-off, human)
-
-Publishing runs through npm trusted publishing (OIDC, no token); npm adds provenance automatically once the repository is public.
-npm configures a trusted publisher from the package's settings page on npmjs.com, so the package has to exist first.
-
-Prerequisites:
-
-- The repository is MIT licensed.
-  `scripts/prepare-publish.ts` copies the root `LICENSE` into each package directory at publish time (npm then packs it automatically; the copies are gitignored), and the release workflow's publish job fails before publishing if the `LICENSE` or either `license` field is missing.
-- The GitHub repository, `drophawk-net/drophawk-js`, is public.
-  It is private until it is deliberately made public, and trusted publishing only attests provenance for public repositories, so make it public before the first automated release.
-- The `release` GitHub environment (restricted to `main`) holds the release App's credentials: variable `DROPHAWK_JS_RELEASE_CLIENT_ID` and secret `DROPHAWK_JS_RELEASE_PRIVATE_KEY`.
-  Without them the version job fails and no "chore: version packages" PR appears.
-- The `npm` GitHub environment exists, because the publish job runs in it and the trusted publisher is bound to its name.
-
-Then, as an owner of the `@drophawk` npm organisation:
-
-1. Merge the "chore: version packages" PR that the Release workflow opens.
-   That bumps the package to `0.1.0`.
-   The first run of the publish job fails because npm does not know the package yet; that is expected.
-2. In a throwaway clone of `main` at the version commit, run these at the repository root:
-   `bun install --frozen-lockfile`, then `bun scripts/prepare-publish.ts`.
-   Never commit the result.
-3. In `packages/sdk`, run `npm pack --pack-destination /tmp --silent` and check that the tarball has the licence: `tar -tzf /tmp/drophawk-sdk-0.1.0.tgz | grep -x package/LICENSE` must print the line.
-4. Still in `packages/sdk`, run `npm publish --provenance=false`, signing in with 2FA.
-   This publishes the real `0.1.0` as `latest`; the `prepack` script builds it first.
-   Provenance is off only because a local publish cannot produce it.
-5. On npmjs.com open `@drophawk/sdk` > Settings > Trusted Publisher, choose GitHub Actions, and enter organization or user `drophawk-net`, repository `drophawk-js`, workflow filename `release.yml`, and environment `npm`.
-   The publish job runs in the GitHub environment `npm`, and npm rejects the token exchange if the two names differ.
-6. In the package's publishing access settings, choose "Require two-factor authentication and disallow tokens".
-   This is mandatory, not optional: it leaves trusted publishing as the only way to publish.
-7. Tag the release that the workflow could not: `git tag @drophawk/sdk@0.1.0 <version-commit>` and `git push origin @drophawk/sdk@0.1.0`.
-
-From the next release on, merging the version PR publishes automatically.
-The workflow runs Node 24, whose npm supports trusted publishing (npm 11.5.1 or later).
