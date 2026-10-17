@@ -15,7 +15,7 @@ name: Release
 #   npm adds provenance automatically for a public repository.
 #
 # The trusted publisher on npmjs.com is bound to this exact file name and to the environment `npm`,
-# so do not rename either. See packages/sdk/README.md for the one-off first publish.
+# so do not rename either; renaming either breaks publishing until npm is updated to match.
 
 on:
   push:
