@@ -1,5 +1,11 @@
 # @drophawk/sdk
 
+## 0.1.2
+
+### Patch Changes
+
+- [#20](https://github.com/drophawk-net/drophawk-js/pull/20) [`4d43f4c`](https://github.com/drophawk-net/drophawk-js/commit/4d43f4c6bcb097be0ebac8847aa7de3b81267a1e) Thanks [@jared-fraser](https://github.com/jared-fraser)! - Tighten the README: a quick start up front, tables for methods, tools, options and errors, and links instead of repetition.
+
 ## 0.1.1
 
 ### Patch Changes
