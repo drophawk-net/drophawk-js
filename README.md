@@ -1,90 +1,72 @@
 # drophawk-js
 
-Official JavaScript and TypeScript packages for the [DropHawk](https://drophawk.net) developer API.
-DropHawk tracks Australian PC component prices and returns Product-level prices with buy links.
-Documentation for the API is at [developers.drophawk.net](https://developers.drophawk.net).
-
-## Packages
+JavaScript and TypeScript packages for the [DropHawk developer API](https://developers.drophawk.net).
+This README is for contributors; each package's README is its user documentation.
 
 | Package | What it is |
 | --- | --- |
-| [`@drophawk/sdk`](packages/sdk) | A typed TypeScript client for the developer API. |
-| [`@drophawk/mcp`](packages/mcp) | A Model Context Protocol server that lets AI assistants search Products and read prices. It is built on the SDK. |
+| [`@drophawk/sdk`](packages/sdk) | Typed client for the developer API. |
+| [`@drophawk/mcp`](packages/mcp) | MCP server for AI assistants, built on the SDK. |
 
-## Where the API contract comes from
+## Where the contract comes from
 
-The DropHawk backend is not in this repository.
-Two files under `spec/` are copies of files that live in the private DropHawk repository, and they are the only inputs this repository takes from it:
+The DropHawk backend is private.
+This repository takes two files from it, and generates code from each:
 
-- `spec/developer-v1.openapi.json` is the OpenAPI document for the developer API.
-  The SDK's types in `packages/sdk/src/generated/api.ts` are generated from it.
-- `spec/catalogue-limits.txt` is the catalogue caveats that the DropHawk website tells agents.
-  `packages/mcp/src/generated/catalogue-limits.ts` inlines it, so the published MCP package needs no spec file at runtime.
+- `spec/developer-v1.openapi.json` generates the SDK's types (`packages/sdk/src/generated/api.ts`).
+- `spec/catalogue-limits.txt` generates the MCP server's catalogue caveats (`packages/mcp/src/generated/catalogue-limits.ts`).
 
-Do not edit the spec files or the generated files by hand.
-A workflow in the DropHawk repository runs whenever the source files change on its `main` branch.
-It copies only the two spec files to the `sync-spec` branch here and opens or updates one pull request; it runs no code from this repository.
-This repository then regenerates the code on that pull request itself, in two workflows:
-
-- `spec-regenerate.yml` runs on pull requests from this repository's `sync-spec` branch (never forks).
-  It runs `bun install --frozen-lockfile --ignore-scripts` and `bun run generate` with no secrets and a read-only token, and uploads only the two generated files.
-- `spec-regenerate-push.yml` runs on `workflow_run`, so it always uses `main`'s copy of itself and of its scripts and never runs pull request code.
-  Its `validate` job has no environment and no secrets: it checks the artifact holds exactly the two generated files as regular files under a size cap, compares them with the pull request's head commit read as git objects (never checked out), and records their SHA-256.
-  Only if they changed does its `push` job run, in the `spec-regenerate` environment: it checks the files against those SHA-256 values, builds the commit with git plumbing and pushes it with a dedicated App's token, only if `sync-spec` still points at the commit the files were generated from.
-  That push runs CI again, and the next regenerate finds nothing to commit; if a regenerate commit would itself need regenerating, the workflow fails instead of looping.
-
-Until the regenerate commit lands, CI's generated-code check fails on the sync pull request.
-The generated code comes from this repository's codegen and its dependencies, so review the whole diff, generated files included, before merging.
-CI also fails any pull request whose generated files do not match `spec/`.
+Never edit either by hand.
+When the sources change on DropHawk's `main`, a DropHawk workflow copies the two files to the `sync-spec` branch here and opens or updates one pull request, running no code from this repository.
+`spec-regenerate.yml` then runs `bun run generate` on that pull request with no secrets, and `spec-regenerate-push.yml` (a `workflow_run` job, so always `main`'s copy) validates the output and pushes it to `sync-spec` with the regenerate App.
+CI fails until that commit lands, and on any pull request whose generated files do not match `spec/`.
+Review the whole sync diff, generated files included, before merging.
 
 ## Development
-
-This is a [Bun](https://bun.sh) workspace.
 
 ```sh
 bun install --frozen-lockfile
 bun run generate                          # after changing spec/
 bun run --filter @drophawk/sdk generate -- --check
 bun run --filter @drophawk/mcp generate -- --check
-bun run --filter @drophawk/sdk test
-bun run --filter @drophawk/sdk build      # the MCP package compiles against the SDK's dist
+bun run --filter @drophawk/sdk typecheck
+bun run --filter @drophawk/sdk test       # also type-checks the README's ts blocks
+bun run --filter @drophawk/sdk build      # the MCP package builds against the SDK's dist
 bun run --filter @drophawk/mcp typecheck
-bun run --filter @drophawk/mcp test
+bun run --filter @drophawk/mcp test       # builds, then unit and stdio end-to-end tests
 ```
 
-Run `bun run changeset` for any change to a published package and commit the file it writes.
-Versions and changelogs are generated by [Changesets](https://github.com/changesets/changesets); never edit them by hand.
-Merging a "chore: version packages" pull request publishes to npm through trusted publishing; see Releasing below.
+Dependencies install with a seven-day minimum release age (`bunfig.toml`), and Dependabot updates them with a cooldown.
 
 ## Releasing
 
-The Release workflow has three jobs with separate privileges:
+Run `bun run changeset` for any change to a published package, READMEs included, and commit the file.
+Never edit versions or changelogs by hand.
 
-- `version` opens the "chore: version packages" pull request.
-  It runs in the `release` environment (restricted to `main`) and pushes with a GitHub App token, so CI runs on the pull request.
-  Configure the App once: install it on this repository with contents and pull-requests write access, then set the variable `DROPHAWK_JS_RELEASE_CLIENT_ID` and the secret `DROPHAWK_JS_RELEASE_PRIVATE_KEY` on the `release` environment.
-  The job's own `GITHUB_TOKEN` is read only and there is no fallback to it: until the App is configured, the job fails with an error naming what is missing, and no version pull request is opened.
-- `build` installs with `--ignore-scripts`, tests, builds and packs tarballs, and uploads them.
-  It has read-only repository access and cannot publish.
-- `publish` runs in the `npm` environment, downloads those tarballs and runs `npm publish` on each through trusted publishing, the SDK before the MCP server, from an empty temporary directory so no `.npmrc` in the repository can configure npm.
-  It tags each version as soon as it is on npm, with a step-scoped token, so a run that fails part way leaves what it published tagged.
-  Rerunning it, or the whole workflow, publishes only what is missing: a version already on npm with the same tarball integrity is skipped and tagged, and one with different contents fails the job, to be tagged by hand at the commit it was published from.
+`release.yml` runs three jobs with separate privileges:
 
-On npmjs.com, each package's trusted publisher must name workflow `release.yml` and environment `npm`, and each package must require two-factor authentication and disallow tokens.
-Dependencies are installed with a seven day minimum release age (`bunfig.toml`), and Dependabot proposes updates with a cooldown.
-See [SECURITY.md](SECURITY.md) to report a vulnerability.
+1. `version` opens the "chore: version packages" pull request with the release App's token, so CI runs on it.
+   With no App configured it fails, naming what is missing.
+2. Once that pull request is merged, `build` tests, builds and packs tarballs with read-only access, rewriting the MCP package's `workspace:` dependency on the SDK to a real range.
+3. `publish`, approved on the `npm` environment, publishes those tarballs (SDK first) through npm trusted publishing with provenance, and tags each version.
+   A rerun skips versions already on npm with identical contents and fails on any that differ.
 
-## Spec regenerate setup
+On npmjs.com, each package's trusted publisher names `release.yml` and environment `npm`, so rename neither, and each package requires 2FA and disallows tokens.
 
-`spec-regenerate-push.yml` pushes with its own GitHub App, separate from the release App, and its own environment.
-Configure them once:
+## GitHub Apps and environments
 
-1. Create a GitHub App owned by `drophawk-net`, e.g. `drophawk-js-spec-regenerate`: no webhook, repository permission `Contents: Read and write` only, "Only on this account".
-   Install it on this repository only.
-   Never add it as a bypass actor on a branch ruleset or protection rule.
-2. Create the environment `spec-regenerate` and restrict its deployment branches to `main` (a `workflow_run` job runs on `main`).
-3. On that environment, set the variable `DROPHAWK_JS_REGEN_CLIENT_ID` (the App's Client ID) and the secret `DROPHAWK_JS_REGEN_PRIVATE_KEY` (its private key).
+Each writer is its own `drophawk-net` GitHub App, installed only on drophawk-js and never a ruleset bypass actor.
+Each environment deploys from `main` only.
 
-## License
+| App | Workflow repo | Environment | Permissions | Client ID variable | Private key secret |
+| --- | --- | --- | --- | --- | --- |
+| Release | drophawk-js | `release` | Contents, Pull requests: write | `DROPHAWK_JS_RELEASE_CLIENT_ID` | `DROPHAWK_JS_RELEASE_PRIVATE_KEY` |
+| Spec regenerate | drophawk-js | `spec-regenerate` | Contents: write | `DROPHAWK_JS_REGEN_CLIENT_ID` | `DROPHAWK_JS_REGEN_PRIVATE_KEY` |
+| Spec sync | DropHawk | `drophawk-js-sync` | Contents, Pull requests: write | `DROPHAWK_JS_SYNC_CLIENT_ID` (repository) | `DROPHAWK_JS_SYNC_PRIVATE_KEY` |
 
-[MIT](LICENSE)
+The `npm` environment holds no secrets.
+
+## Security and license
+
+Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
+[MIT](LICENSE) licensed.
