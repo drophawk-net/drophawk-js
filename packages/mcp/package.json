@@ -35,12 +35,12 @@
   "dependencies": {
     "@drophawk/sdk": "workspace:^",
     "@modelcontextprotocol/server": "^2.3.1",
-    "zod": "^4.2.0"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "^2.3.1",
     "@types/node": "^22.0.0",
     "typescript": "^6.0.3",
-    "vitest": "^5.0.3"
+    "vitest": "^5.0.4"
   }
 }
