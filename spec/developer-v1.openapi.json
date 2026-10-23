@@ -3,7 +3,11 @@
   "info": {
     "title": "DropHawk Developer API",
     "version": "1.0.0",
-    "description": "Product-level prices for PC components, tracked by DropHawk.\n\nNo key is needed.\nEach IP may make 60 requests a minute, in bursts of up to 30.\nRateLimit-Limit reports the burst; RateLimit-Remaining and RateLimit-Reset are sent only on uncacheable responses.\nOver the limit, the API answers 429 with Retry-After in seconds.\n\nA successful GET or HEAD may be cached publicly for 5 minutes; every other response is no-store.\nHEAD is answered like GET, without a body.\nEvery response allows any origin.\nUnknown query parameters are ignored.\n\nEvery HTTP/JSON error is an Error (a google.rpc.Status) carrying one ErrorInfo with domain \"drophawk.net\"; branch on its reason, never the message.\nConnect callers get Connect errors carrying the same ErrorInfo.\nErrors raised before the API sees a request (an undecodable body, a body over 64 KiB, an unknown route) may carry none.\n\nWithin v1, changes are additive: new fields, endpoints, error reasons and withheld reasons may appear, so ignore what you do not recognise.\nRemoving a field or changing its meaning is a new version, served alongside v1 for at least 3 months."
+    "description": "Product-level prices for PC components, tracked by DropHawk.\n\nNo key is needed.\nEach IP may make 60 requests a minute, in bursts of up to 30.\nRateLimit-Limit reports the burst; RateLimit-Remaining and RateLimit-Reset are sent only on uncacheable responses.\nOver the limit, the API answers 429 with Retry-After in seconds.\n\nA successful GET or HEAD may be cached publicly for 5 minutes; every other response is no-store.\nHEAD is answered like GET, without a body.\nEvery response allows any origin.\nUnknown query parameters are ignored.\n\nEvery HTTP/JSON error is an Error (a google.rpc.Status) carrying one ErrorInfo with domain \"drophawk.net\"; branch on its reason, never the message.\nConnect callers get Connect errors carrying the same ErrorInfo.\nErrors raised before the API sees a request (an undecodable body, a body over 64 KiB, an unknown route) may carry none.\n\nWithin v1, changes are additive: new fields, endpoints, error reasons and withheld reasons may appear, so ignore what you do not recognise.\nRemoving a field or changing its meaning is a new version, served alongside v1 for at least 3 months.\n\nNothing is removed inside v1.\nAn operation marked deprecated keeps working until v1 stops answering, which happens only after v2 has run alongside it for at least 3 months.\nEvery response for a deprecated operation carries Deprecation, Sunset (once v1's retirement date is set) and Link rel=\"deprecation\" headers.\nSee the versioning and deprecation policy linked below."
+  },
+  "externalDocs": {
+    "description": "Versioning and deprecation policy",
+    "url": "https://developers.drophawk.net/guides/versioning-and-deprecation"
   },
   "servers": [
     {
@@ -27,6 +31,26 @@
         "schema": {
           "type": "string"
         }
+      },
+      "Deprecation": {
+        "description": "Sent only by a deprecated operation. When it was deprecated, as an RFC 9745 structured-field date, \"@\" and Unix seconds.",
+        "schema": {
+          "type": "string",
+          "examples": [
+            "@1799971200"
+          ]
+        },
+        "examples": {}
+      },
+      "Link": {
+        "description": "Sent only by a deprecated operation. The versioning and deprecation policy, with rel=\"deprecation\" (RFC 9745).",
+        "schema": {
+          "type": "string",
+          "examples": [
+            "<https://developers.drophawk.net/guides/versioning-and-deprecation>; rel=\"deprecation\""
+          ]
+        },
+        "examples": {}
       },
       "Location": {
         "description": "The same endpoint for the surviving Product, as a path on the API's origin.",
@@ -57,6 +81,16 @@
         "schema": {
           "type": "integer"
         }
+      },
+      "Sunset": {
+        "description": "Sent only by a deprecated operation once v1's retirement date is set. When v1 stops answering, as an RFC 8594 HTTP-date.",
+        "schema": {
+          "type": "string",
+          "examples": [
+            "Thu, 15 Jul 2027 00:00:00 GMT"
+          ]
+        },
+        "examples": {}
       }
     },
     "responses": {

@@ -516,6 +516,10 @@ export interface components {
     headers: {
         /** @description "public, max-age=300" on a successful GET; "no-store" on every other response. */
         CacheControl: string;
+        /** @description Sent only by a deprecated operation. When it was deprecated, as an RFC 9745 structured-field date, "@" and Unix seconds. */
+        Deprecation: string;
+        /** @description Sent only by a deprecated operation. The versioning and deprecation policy, with rel="deprecation" (RFC 9745). */
+        Link: string;
         /** @description The same endpoint for the surviving Product, as a path on the API's origin. */
         Location: string;
         /** @description The burst a caller may make back-to-back (30). The sustained rate is 60 requests a minute. */
@@ -526,6 +530,8 @@ export interface components {
         RateLimitReset: number;
         /** @description Seconds to wait before retrying. */
         RetryAfter: number;
+        /** @description Sent only by a deprecated operation once v1's retirement date is set. When v1 stops answering, as an RFC 8594 HTTP-date. */
+        Sunset: string;
     };
     pathItems: never;
 }
