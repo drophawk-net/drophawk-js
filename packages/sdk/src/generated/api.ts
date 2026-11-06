@@ -119,9 +119,9 @@ export interface paths {
         };
         /**
          * Get a Product's daily lows over the last 14 days.
-         * @description A daily low is the lowest price seen on one UTC day across all Retailers, in stock or not, so it is not a history of best_price. Days with no observation have no point.
+         * @description A daily low is the lowest price seen on one UTC day across all Retailers, in stock or not, so it is not a history of best_price. Days with no observation have no point. Each point also carries in_stock_price, the lowest price that day among in-stock Listings only, absent on a day nothing was in stock.
          *
-         *     The window is today (UTC) and the 13 days before, starting at window_start. If an earlier point exists, the latest one is included with is_carried_forward set, so a chart can start at the window's first day. Identifiers and merges are handled as in GET /v1/products/{identifier}.
+         *     The window is today (UTC) and the 13 days before, starting at window_start. If an earlier point exists, the latest one is included with is_carried_forward set, so a chart of price can start at the window's first day; that point is the latest priced day, so its in_stock_price can be absent. Identifiers and merges are handled as in GET /v1/products/{identifier}.
          */
         get: operations["getProductDailyLows"];
         put?: never;
@@ -200,16 +200,18 @@ export interface components {
             /** @description Stable URL-safe identifier, for example "gpu". */
             slug: string;
         };
-        /** @description DailyLow is a Product's lowest price on one UTC day across all Retailers, in stock or not. */
+        /** @description DailyLow is a Product's lowest price on one UTC day across all Retailers, in stock or not, and beside it the lowest of that day's in-stock prices. */
         DailyLow: {
             /**
              * Format: date
              * @description The UTC calendar date.
              */
             date: string;
+            /** @description The lowest price that day among Listings seen in stock, counting in-stock Listings only, unlike price. Never below price, and in the same currency. Absent on a day no Listing was seen in stock. The carried-forward point is the latest priced day before the window, not the latest in-stock one, so its in_stock_price can be absent even when an earlier day had one. */
+            in_stock_price?: components["schemas"]["Money"];
             /** @description True only for the point before the window: the latest earlier price, in force when the window opens. */
             is_carried_forward: boolean;
-            /** @description The lowest price that day. */
+            /** @description The lowest price that day, in stock or not: it counts out-of-stock Listings too, so it can sit below in_stock_price. */
             price: components["schemas"]["Money"];
         };
         /** @description DatedPrice is a price and the UTC date it was observed. */
