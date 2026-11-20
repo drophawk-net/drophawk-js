@@ -75,9 +75,9 @@ export interface paths {
         };
         /**
          * Search Products by text.
-         * @description q is matched against name, Brand name and model number, tolerating typos, case and punctuation. Results come best match first; no match is an empty list.
+         * @description q is matched against name, Brand name and model number, tolerating typos, case and punctuation. Results come exact model matches first, then Products that contain q as whole words over ones that only resemble it, then Products with an in-stock price, then, among those that contain q, Products offered by more Retailers, then best text match; no match is an empty list.
          *
-         *     To page, send next_page_token back as page_token with the same q; page_size may change between pages. Pages neither overlap nor skip while the catalog is unchanged.
+         *     To page, send next_page_token back as page_token with the same q; page_size may change between pages. Pages neither overlap nor skip while the catalog is unchanged; a change in stock, price or Listings is a catalog change.
          */
         get: operations["searchProducts"];
         put?: never;
@@ -253,7 +253,7 @@ export interface components {
          *     - PRODUCT_NOT_FOUND (404): no Product is known by the identifier, or it has been removed from the catalog.
          *     - INVALID_IDENTIFIER (400): the identifier cannot name any Product.
          *     - INVALID_QUERY (400): the search query q is blank, over 256 bytes, or has control characters.
-         *     - INVALID_PAGE_TOKEN (400): the page_token is malformed, or was issued for a different q.
+         *     - INVALID_PAGE_TOKEN (400): the page_token is malformed, was issued for a different q, or was issued before a change to search ordering.
          *     - INVALID_PAGE_SIZE (400): the page_size is negative.
          *     - EMPTY_BATCH (400): a batch request names no identifiers.
          *     - BATCH_TOO_LARGE (400): a batch request names more than 50 identifiers; metadata "max_identifiers" is the limit.
